@@ -1,0 +1,5 @@
+# Production dependencies
+# Add your required packages here
+# Example:
+# requests>=2.25.0
+# numpy>=1.20.0 
