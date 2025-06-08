@@ -1,5 +1,6 @@
 """
 Conversation orchestrator for managing LLM interactions and context updates.
+Updated to use the unified Event system, with OrchestratorStatus removed.
 """
 
 import asyncio
@@ -12,8 +13,8 @@ from ..types import Message, UserMessage, AssistantMessage, ToolMessage
 from ..detection import TopicDriftDetector, EmbeddingResult
 from ..summarization import TopicSummarizer, Topic
 from ..storage import VectorDatabase, InMemoryVectorDatabase
-from .status import OrchestratorStatus
-from .events import StreamEvent
+from ..llm import BaseLLMClient, Event, EventType
+from ..tools import ToolExecutor
 
 
 class ConversationOrchestrator:
@@ -34,7 +35,8 @@ class ConversationOrchestrator:
     def __init__(
         self,
         context_manager: LLMContextManager,
-        llm_client: Optional[Callable] = None,
+        llm_client: Optional[BaseLLMClient] = None,
+        tool_executor: Optional[ToolExecutor] = None,
         vector_database: Optional[VectorDatabase] = None,
         drift_detection_config: Optional[Dict[str, Any]] = None,
         logger: Optional[logging.Logger] = None
@@ -44,15 +46,16 @@ class ConversationOrchestrator:
         
         Args:
             context_manager: The context manager instance
-            llm_client: LLM client function (async callable)
+            llm_client: LLM client instance (BaseLLMClient)
+            tool_executor: Tool executor for handling tool calls
             vector_database: Vector database for storing topics
             drift_detection_config: Configuration for drift detection
             logger: Optional logger instance
         """
         self.context_manager = context_manager
         self.llm_client = llm_client
+        self.tool_executor = tool_executor or ToolExecutor()
         self.logger = logger or logging.getLogger(__name__)
-        self.status = OrchestratorStatus.IDLE
         
         # Tool/function registry
         self.tool_handlers: Dict[str, Callable] = {}
@@ -91,42 +94,31 @@ class ConversationOrchestrator:
         self.tool_handlers[tool_name] = handler
         self.logger.info(f"Registered tool handler: {tool_name}")
     
-    async def process_message(self, message: Message) -> AsyncGenerator[StreamEvent, None]:
+    async def process_message(self, message: Message) -> AsyncGenerator[Event, None]:
         """
         Process an incoming message and yield streaming events.
-        
-        New Algorithm:
-        1. Add user message to FIFO queue
-        2. Check for topic drift - if detected, add warning message to queue
-        3. Check token usage - if near limit, add warning message to queue  
-        4. Construct system message from all blocks except FIFO queue and working context
-        5. Call LLM with function calling enabled for context management
-        6. Handle any function calls from LLM
-        7. Stream back LLM events only
         
         Args:
             message: The incoming message to process
             
         Yields:
-            StreamEvent: Events from LLM processing only
+            Event: Events from LLM processing and orchestration
         """
         import time
         
-        self.status = OrchestratorStatus.PROCESSING
         start_time = time.time()
         self.messages_processed += 1
         
         try:
-            # Step 1: Add user message to FIFO queue FIRST
+            # Step 1: Add user message to FIFO queue
             self.context_manager.add_message_to_queue(message)
             self.logger.info(f"Added {message.role.value} message to FIFO queue")
             
-            # Step 2: Check for topic drift (only for user messages)
+            # Step 2: Check for topic drift
             drift_detected = False
             if message.role.value == "user":
                 drift_detected = await self._detect_topic_drift(message)
                 
-                # If drift detected, add warning message to FIFO queue
                 if drift_detected:
                     drift_warning = AssistantMessage(
                         content="TOPIC DRIFT DETECTED: The conversation has shifted to a new topic. I should save the current conversation topic before continuing."
@@ -134,7 +126,7 @@ class ConversationOrchestrator:
                     self.context_manager.add_message_to_queue(drift_warning)
                     self.logger.info("Added topic drift warning to FIFO queue")
             
-            # Step 3: Check token usage and add warning if near limit
+            # Step 3: Check token usage
             token_warning_added = False
             if self.context_manager.is_near_token_limit(threshold=0.7):
                 token_warning = AssistantMessage(
@@ -144,15 +136,10 @@ class ConversationOrchestrator:
                 token_warning_added = True
                 self.logger.info("Added token limit warning to FIFO queue")
             
-            # Step 4: Get messages for LLM (includes system messages from blocks)
-            # The context manager will construct system messages from:
-            # - SystemInstructionsBlock
-            # - MemoryInstructionsBlock  
-            # - ToolsDefinitionsBlock
-            # Plus conversation messages from FIFO queue and working context topics
+            # Step 4: Get messages for LLM
             llm_messages = self.context_manager.get_messages_for_llm()
             
-            # Log context summary for debugging
+            # Log context summary
             context_summary = self.context_manager.get_context_summary()
             self.logger.info(
                 f"Context: {context_summary['total_tokens']} tokens, "
@@ -162,81 +149,55 @@ class ConversationOrchestrator:
                 f"token_warning: {token_warning_added}"
             )
             
-            # Step 5: Call LLM with function calling enabled - ONLY YIELD LLM EVENTS
+            # Step 5: Call LLM
             if self.llm_client:
                 async for event in self._call_llm_with_functions(llm_messages, drift_detected or token_warning_added):
                     yield event
             else:
-                # Mock LLM with function calling capability - ONLY YIELD LLM EVENTS
-                async for event in self._mock_llm_with_functions(llm_messages, drift_detected, token_warning_added):
-                    yield event
+                # No LLM client provided - cannot process without one
+                yield Event(
+                    type=EventType.RUN_ERROR,
+                    error="No LLM client provided to orchestrator",
+                    data={"error_type": "MissingLLMClient"},
+                    timestamp=time.time()
+                )
             
         except Exception as e:
-            self.status = OrchestratorStatus.ERROR
             self.logger.error(f"Error in process_message: {e}")
-            # Only yield error events that would come from LLM
-            yield StreamEvent(
-                type="llm_error",
-                data={"error": str(e), "error_type": type(e).__name__},
+            yield Event(
+                type=EventType.RUN_ERROR,
+                error=str(e),
+                data={"error_type": type(e).__name__},
                 timestamp=time.time()
             )
-        finally:
-            self.status = OrchestratorStatus.IDLE
     
     async def _detect_topic_drift(self, message: Message) -> bool:
-        """
-        Detect topic drift for a message.
-        
-        Args:
-            message: The message to analyze for topic drift
-            
-        Returns:
-            bool: True if drift is detected, False otherwise
-        """
+        """Detect topic drift for a message."""
         try:
             self.logger.debug(f"Analyzing message for topic drift: {str(message.content)[:50]}...")
             
-            # Get message embedding using the correct API
             embedding_result = self.drift_detector.create_embedding(message)
-            self.logger.debug(f"Created embedding of size {len(embedding_result.embedding)}")
             
-            # Check for drift using the correct API
-            drift_detected, embedding_result, similarity_score = self.drift_detector.detect_drift(message)
+            # EmbeddingResult doesn't have success/error attributes - it just returns the result or raises exception
+            drift_result = self.drift_detector.detect_drift(embedding_result.embedding)
             
-            if drift_detected:
+            if drift_result.drift_detected:
+                self.logger.info(f"Topic drift detected: {drift_result}")
                 self.drift_detections += 1
-                self.logger.info(f"Topic drift detected with similarity score: {similarity_score}")
-            else:
-                self.logger.debug(f"No topic drift detected (similarity: {similarity_score})")
+                return True
             
-            return drift_detected
+            return False
             
         except Exception as e:
             self.logger.error(f"Error in topic drift detection: {e}")
             return False
     
-    async def _call_llm_with_functions(self, messages: list, function_calling_enabled: bool) -> AsyncGenerator[StreamEvent, None]:
-        """
-        Call the LLM with messages and handle streaming response.
-        
-        Args:
-            messages: List of messages for the LLM
-            function_calling_enabled: Whether function calling is enabled
-            
-        Yields:
-            StreamEvent: Events from LLM processing
-        """
+    async def _call_llm_with_functions(self, messages: list, function_calling_enabled: bool) -> AsyncGenerator[Event, None]:
+        """Call the LLM with messages and handle streaming response with tool execution."""
         import time
         
-        # This is a placeholder for actual LLM integration with function calling
-        # In practice, you would:
-        # 1. Prepare function definitions for context management
-        # 2. Call the LLM API with function calling enabled
-        # 3. Handle function calls and responses
-        # 4. Stream back the results
-        
-        yield StreamEvent(
-            type="llm_call_start",
+        yield Event(
+            type=EventType.RUN_STARTED,
             data={
                 "message_count": len(messages),
                 "function_calling": function_calling_enabled,
@@ -246,177 +207,189 @@ class ConversationOrchestrator:
         )
         
         try:
-            # Actual LLM call would go here
-            # For now, this is a placeholder
-            yield StreamEvent(
-                type="llm_response_chunk",
-                data={"content": "Real LLM integration not implemented yet."},
-                timestamp=time.time()
-            )
+            # Convert messages to proper format for LLM client
+            formatted_messages = self._format_messages_for_llm(messages)
+            
+            # Prepare generation parameters
+            generation_params = {}
+            if function_calling_enabled and self.tool_executor.get_registered_tools():
+                generation_params["tools"] = self.tool_executor.get_tool_schemas()
+            
+            # Track conversation state for potential tool calls
+            pending_tool_calls = {}
+            assistant_content = ""
+            
+            # Stream LLM response and handle tool calls
+            async for event in self.llm_client.generate_stream(formatted_messages, **generation_params):
+                
+                if event.type == EventType.RUN_STARTED:
+                    yield Event(
+                        type=EventType.TEXT_MESSAGE_START,
+                        timestamp=time.time()
+                    )
+                
+                elif event.type == EventType.TEXT_MESSAGE_CONTENT:
+                    assistant_content += event.content
+                    yield event  # Pass through the original event
+                
+                elif event.type == EventType.TOOL_CALL_START:
+                    pending_tool_calls[event.tool_call_id] = {
+                        "name": event.tool_name,
+                        "args": None
+                    }
+                    yield event  # Pass through the original event
+                
+                elif event.type == EventType.TOOL_CALL_ARGS:
+                    if event.tool_call_id in pending_tool_calls:
+                        pending_tool_calls[event.tool_call_id]["args"] = event.tool_args
+                    yield event  # Pass through the original event
+                
+                elif event.type == EventType.TOOL_CALL_END:
+                    # Execute the tool
+                    if event.tool_call_id in pending_tool_calls:
+                        tool_call = pending_tool_calls[event.tool_call_id]
+                        try:
+                            # Execute tool via tool executor
+                            result = await self.tool_executor.execute_tool(
+                                tool_call_id=event.tool_call_id,
+                                tool_name=tool_call["name"],
+                                tool_args=tool_call["args"] or {}
+                            )
+                            
+                            yield Event(
+                                type=EventType.CUSTOM,
+                                data={
+                                    "function_name": tool_call["name"],
+                                    "result": result,
+                                    "call_id": event.tool_call_id,
+                                    "success": True,
+                                    "event_subtype": "tool_result"
+                                },
+                                timestamp=time.time()
+                            )
+                            
+                            # Add tool result to messages for continued conversation
+                            formatted_messages.append({
+                                "role": "tool",
+                                "content": json.dumps(result),
+                                "tool_call_id": event.tool_call_id
+                            })
+                            
+                        except Exception as tool_error:
+                            self.logger.error(f"Tool execution error: {tool_error}")
+                            yield Event(
+                                type=EventType.CUSTOM,
+                                data={
+                                    "function_name": tool_call["name"],
+                                    "error": str(tool_error),
+                                    "call_id": event.tool_call_id,
+                                    "success": False,
+                                    "event_subtype": "tool_result"
+                                },
+                                timestamp=time.time()
+                            )
+                            
+                            # Add error result to messages
+                            formatted_messages.append({
+                                "role": "tool",
+                                "content": json.dumps({"error": str(tool_error)}),
+                                "tool_call_id": event.tool_call_id
+                            })
+                        
+                        # Remove from pending
+                        del pending_tool_calls[event.tool_call_id]
+                
+                elif event.type == EventType.RUN_FINISHED:
+                    # Add final assistant message to context
+                    if assistant_content.strip():
+                        assistant_message = AssistantMessage(content=assistant_content.strip())
+                        self.context_manager.add_message_to_queue(assistant_message)
+                        
+                        yield Event(
+                            type=EventType.TEXT_MESSAGE_END,
+                            content=assistant_message.content,
+                            data={
+                                "message": {
+                                    "role": assistant_message.role.value,
+                                    "content": assistant_message.content
+                                },
+                                "tool_calls_executed": len(pending_tool_calls) == 0
+                            },
+                            timestamp=time.time()
+                        )
+                
+                elif event.type == EventType.RUN_ERROR:
+                    yield event  # Pass through the original event
             
         except Exception as e:
-            yield StreamEvent(
-                type="llm_error",
-                data={"error": str(e)},
+            self.logger.error(f"Error in LLM call: {e}")
+            yield Event(
+                type=EventType.RUN_ERROR,
+                error=str(e),
                 timestamp=time.time()
             )
-    
-    async def _mock_llm_with_functions(self, messages: list, drift_detected: bool, token_warning_added: bool) -> AsyncGenerator[StreamEvent, None]:
-        """
-        Mock LLM with function calling capability for testing.
-        
-        Args:
-            messages: List of messages for the LLM
-            drift_detected: Whether topic drift was detected
-            token_warning_added: Whether token limit warning was added
-            
-        Yields:
-            StreamEvent: Mock LLM events
-        """
-        import time
-        
-        yield StreamEvent(
-            type="llm_call_start",
-            data={
-                "message_count": len(messages),
-                "function_calling": True,
-                "client_type": "mock"
-            },
-            timestamp=time.time()
-        )
-        
-        # Register context management functions
-        self._register_context_management_functions()
-        
-        # Mock LLM behavior based on context warnings
-        function_calls_made = []
-        
-        # Check for topic drift warning in messages
-        has_drift_warning = any(
-            hasattr(msg, 'content') and 
-            "TOPIC DRIFT DETECTED" in str(msg.content) 
-            for msg in messages
-        )
-        
-        # Check for token limit warning in messages  
-        has_token_warning = any(
-            hasattr(msg, 'content') and 
-            "APPROACHING TOKEN LIMIT" in str(msg.content)
-            for msg in messages
-        )
-        
-        if has_drift_warning:
-            # Mock LLM decides to save current topic
-            yield StreamEvent(
-                type="llm_function_call",
-                data={
-                    "function_name": "save_current_topic",
-                    "arguments": {
-                        "topic_summary": "Previous conversation topic that needs to be saved",
-                        "topic_key_facts": ["Important fact 1", "Important fact 2"]
-                    }
-                },
-                timestamp=time.time()
-            )
-            
-            # Execute the function call
-            topic_id = self.context_manager.save_current_topic(
-                "Previous conversation topic that needs to be saved",
-                ["Important fact 1", "Important fact 2"]
-            )
-            
-            function_calls_made.append({
-                "function": "save_current_topic", 
-                "result": topic_id
-            })
-            
-            yield StreamEvent(
-                type="llm_function_result",
-                data={
-                    "function_name": "save_current_topic",
-                    "result": topic_id,
-                    "success": True
-                },
-                timestamp=time.time()
-            )
-        
-        if has_token_warning:
-            # Mock LLM decides to evict oldest topic
-            yield StreamEvent(
-                type="llm_function_call",
-                data={
-                    "function_name": "evict_oldest_topic",
-                    "arguments": {}
-                },
-                timestamp=time.time()
-            )
-            
-            # Execute the function call
-            evicted_topic_id = self.context_manager.evict_oldest_topic()
-            
-            function_calls_made.append({
-                "function": "evict_oldest_topic",
-                "result": evicted_topic_id
-            })
-            
-            yield StreamEvent(
-                type="llm_function_result",
-                data={
-                    "function_name": "evict_oldest_topic", 
-                    "result": evicted_topic_id,
-                    "success": True
-                },
-                timestamp=time.time()
-            )
-        
-        # Mock LLM response after handling context management
-        if function_calls_made:
-            response_content = f"I've handled the context management tasks: {', '.join([fc['function'] for fc in function_calls_made])}. How can I help you now?"
-        else:
-            response_content = "I understand your message. How can I assist you today?"
-        
-        yield StreamEvent(
-            type="llm_response_start",
-            data={},
-            timestamp=time.time()
-        )
-        
-        yield StreamEvent(
-            type="llm_response_chunk",
-            data={"content": response_content},
-            timestamp=time.time()
-        )
-        
-        # Add assistant response to context
-        assistant_message = AssistantMessage(content=response_content)
-        self.context_manager.add_message_to_queue(assistant_message)
-        
-        yield StreamEvent(
-            type="llm_response_complete",
-            data={
-                "message": assistant_message.dict(),
-                "function_calls_made": function_calls_made
-            },
-            timestamp=time.time()
-        )
     
     def _register_context_management_functions(self):
         """Register context management functions that the LLM can call."""
+        from ..tools import BaseTool
         
-        # Register save_current_topic function
-        async def save_topic_handler(topic_summary: str, topic_key_facts: list = None):
-            """Handler for save_current_topic function calls."""
-            return self.context_manager.save_current_topic(topic_summary, topic_key_facts)
+        class SaveTopicTool(BaseTool):
+            def __init__(self, context_manager):
+                super().__init__("save_current_topic", "Save the current conversation topic")
+                self.context_manager = context_manager
+            
+            async def execute(self, topic_summary: str, topic_key_facts: list = None) -> dict:
+                topic_id = self.context_manager.save_current_topic(topic_summary, topic_key_facts)
+                return {"topic_id": topic_id, "summary": topic_summary}
+            
+            def get_schema(self) -> dict:
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": "save_current_topic",
+                        "description": "Save the current conversation topic",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "topic_summary": {"type": "string"},
+                                "topic_key_facts": {"type": "array", "items": {"type": "string"}}
+                            },
+                            "required": ["topic_summary"]
+                        }
+                    }
+                }
         
-        # Register evict_oldest_topic function
-        async def evict_topic_handler():
-            """Handler for evict_oldest_topic function calls."""
-            return self.context_manager.evict_oldest_topic()
+        class EvictTopicTool(BaseTool):
+            def __init__(self, context_manager):
+                super().__init__("evict_oldest_topic", "Evict the oldest topic from context")
+                self.context_manager = context_manager
+            
+            async def execute(self) -> dict:
+                topic_id = self.context_manager.evict_oldest_topic()
+                return {"evicted_topic_id": topic_id}
+            
+            def get_schema(self) -> dict:
+                return {
+                    "type": "function", 
+                    "function": {
+                        "name": "evict_oldest_topic",
+                        "description": "Evict the oldest topic from context",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    }
+                }
         
-        self.register_tool_handler("save_current_topic", save_topic_handler)
-        self.register_tool_handler("evict_oldest_topic", evict_topic_handler)
+        # Register tools with the tool executor
+        save_tool = SaveTopicTool(self.context_manager)
+        evict_tool = EvictTopicTool(self.context_manager)
         
-        self.logger.info("Registered context management functions for LLM")
+        self.tool_executor.register_tool(save_tool)
+        self.tool_executor.register_tool(evict_tool)
+        
+        self.logger.info("Registered context management tools with tool executor")
     
     def _get_drift_statistics(self) -> Dict[str, Any]:
         """Get topic drift detection statistics."""
@@ -434,14 +407,46 @@ class ConversationOrchestrator:
     def get_status(self) -> Dict[str, Any]:
         """Get current orchestrator status."""
         status_data = {
-            "status": self.status.value,
             "context_summary": self.context_manager.get_context_summary(),
             "registered_tools": list(self.tool_handlers.keys()),
             "topic_drift": self._get_drift_statistics()
         }
         
-        # Add working context statistics
         if hasattr(self.context_manager.context, 'working_context'):
             status_data["working_context"] = self.context_manager.context.working_context.get_statistics()
         
-        return status_data 
+        return status_data
+
+    def _format_messages_for_llm(self, messages: list) -> list:
+        """Format messages from context manager for LLM client."""
+        formatted_messages = []
+        
+        for msg in messages:
+            if hasattr(msg, 'role') and hasattr(msg, 'content'):
+                # Message object from types
+                formatted_msg = {
+                    "role": msg.role.value if hasattr(msg.role, 'value') else str(msg.role),
+                    "content": str(msg.content)
+                }
+                
+                # Add tool call information if present
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    formatted_msg["tool_calls"] = msg.tool_calls
+                
+                if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
+                    formatted_msg["tool_call_id"] = msg.tool_call_id
+                    
+                formatted_messages.append(formatted_msg)
+                
+            elif isinstance(msg, dict):
+                # Already formatted message
+                formatted_messages.append(msg)
+                
+            else:
+                # String or other content
+                formatted_messages.append({
+                    "role": "user",
+                    "content": str(msg)
+                })
+        
+        return formatted_messages 

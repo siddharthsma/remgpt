@@ -3,11 +3,10 @@ Conversation orchestration components.
 """
 
 from .orchestrator import ConversationOrchestrator
-from .status import OrchestratorStatus
-from .events import StreamEvent
+from ..llm import Event, EventType
 
 __all__ = [
     "ConversationOrchestrator",
-    "OrchestratorStatus",
-    "StreamEvent"
+    "Event",
+    "EventType"
 ] 
