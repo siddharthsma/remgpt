@@ -1,6 +1,7 @@
 import json
 import uuid
-from typing import List, Dict, Any, Generator, Optional
+import asyncio
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from ..base import BaseLLMClient
 from ..events import Event, EventType
 
@@ -46,7 +47,7 @@ class GeminiClient(BaseLLMClient):
                 gemini_tools.append(gemini_tool)
         return gemini_tools
 
-    def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> Generator[Event, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[Event, None]:
         """Generate streaming response from Gemini."""
         if not self.validate_messages(messages):
             yield Event(type=EventType.RUN_ERROR, error="Invalid message format")

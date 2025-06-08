@@ -1,6 +1,7 @@
 import json
 import uuid
-from typing import List, Dict, Any, Generator, Optional
+import asyncio
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from ..base import BaseLLMClient
 from ..events import Event, EventType
 
@@ -38,7 +39,7 @@ class OpenAIClient(BaseLLMClient):
         except ImportError:
             raise ImportError("OpenAI package not installed. Install with: pip install openai")
     
-    def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> Generator[Event, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[Event, None]:
         """Generate streaming response from OpenAI."""
         if not self.validate_messages(messages):
             yield Event(type=EventType.RUN_ERROR, error="Invalid message format")

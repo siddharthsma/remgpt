@@ -66,10 +66,7 @@ class ConversationOrchestrator:
         if self.llm_client:
             self.context_manager.sync_with_llm_client(self.llm_client)
         
-        # Tool/function registry
-        self.tool_handlers: Dict[str, Callable] = {}
-        
-        # Remote tool configuration
+        # Remote tool configuration (optional)
         self.mcp_servers = mcp_servers or []
         self.a2a_agents = a2a_agents or []
         self.remote_tool_manager = None
@@ -82,6 +79,9 @@ class ConversationOrchestrator:
         self.topics_created = 0
         self.drift_detections = 0
         self.messages_processed = 0
+        
+        # Register context management functions for the LLM to use
+        self._register_context_management_functions()
     
     def _initialize_topic_components(self, config: Dict[str, Any]):
         """Initialize topic drift detection components."""
@@ -146,9 +146,37 @@ class ConversationOrchestrator:
             self.remote_tool_manager = None
     
     def register_tool_handler(self, tool_name: str, handler: Callable):
-        """Register a handler for a specific tool/function."""
-        self.tool_handlers[tool_name] = handler
-        self.logger.info(f"Registered tool handler: {tool_name}")
+        """
+        Register a handler for a specific tool/function.
+        Note: This is deprecated, use tool_executor.register_tool() instead.
+        """
+        # Create a simple tool wrapper for backward compatibility
+        from ..tools import BaseTool
+        
+        class LegacyTool(BaseTool):
+            def __init__(self, name, handler):
+                super().__init__(name, f"Legacy tool: {name}")
+                self.handler = handler
+                
+            async def execute(self, **kwargs):
+                if asyncio.iscoroutinefunction(self.handler):
+                    return await self.handler(**kwargs)
+                else:
+                    return self.handler(**kwargs)
+                    
+            def get_schema(self):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": self.name,
+                        "description": self.description,
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                }
+        
+        legacy_tool = LegacyTool(tool_name, handler)
+        self.tool_executor.register_tool(legacy_tool)
+        self.logger.info(f"Registered legacy tool handler: {tool_name}")
     
     async def process_message(self, message: Message) -> AsyncGenerator[Event, None]:
         """
@@ -230,15 +258,38 @@ class ConversationOrchestrator:
     async def _detect_topic_drift(self, message: Message) -> bool:
         """Detect topic drift for a message."""
         try:
-            self.logger.debug(f"Analyzing message for topic drift: {str(message.content)[:50]}...")
+            # Extract text content from message
+            if hasattr(message, 'content'):
+                if isinstance(message.content, str):
+                    text_content = message.content
+                elif isinstance(message.content, list):
+                    # Handle rich content - extract text parts
+                    text_parts = []
+                    for item in message.content:
+                        if isinstance(item, dict) and item.get('type') == 'text':
+                            text_parts.append(item.get('text', ''))
+                        elif isinstance(item, str):
+                            text_parts.append(item)
+                    text_content = ' '.join(text_parts)
+                else:
+                    text_content = str(message.content)
+            else:
+                text_content = str(message)
             
-            embedding_result = self.drift_detector.create_embedding(message)
+            self.logger.debug(f"Analyzing message for topic drift: {text_content[:50]}...")
             
-            # EmbeddingResult doesn't have success/error attributes - it just returns the result or raises exception
-            drift_result = self.drift_detector.detect_drift(embedding_result.embedding)
+            # Create a simple message-like object for the drift detector
+            class SimpleMessage:
+                def __init__(self, content):
+                    self.content = content
             
-            if drift_result.drift_detected:
-                self.logger.info(f"Topic drift detected: {drift_result}")
+            simple_message = SimpleMessage(text_content)
+            
+            # Use detect_drift which handles both embedding creation and drift detection
+            drift_detected, embedding_result, similarity = self.drift_detector.detect_drift(simple_message)
+            
+            if drift_detected:
+                self.logger.info(f"Topic drift detected: similarity={similarity:.3f}")
                 self.drift_detections += 1
                 return True
             
@@ -248,8 +299,16 @@ class ConversationOrchestrator:
             self.logger.error(f"Error in topic drift detection: {e}")
             return False
     
-    async def _call_llm_with_functions(self, messages: list, function_calling_enabled: bool) -> AsyncGenerator[Event, None]:
-        """Call the LLM with messages and handle streaming response with tool execution."""
+    async def _call_llm_with_functions(self, messages: list, function_calling_enabled: bool, max_turns: int = 5) -> AsyncGenerator[Event, None]:
+        """
+        Call the LLM with messages and handle streaming response with tool execution.
+        Supports multi-turn conversations with recursive tool calling.
+        
+        Args:
+            messages: Messages to send to LLM
+            function_calling_enabled: Whether function calling is enabled
+            max_turns: Maximum number of conversation turns to prevent infinite loops
+        """
         import time
         
         yield Event(
@@ -257,10 +316,29 @@ class ConversationOrchestrator:
             data={
                 "message_count": len(messages),
                 "function_calling": function_calling_enabled,
-                "client_type": "real"
+                "client_type": "real",
+                "max_turns": max_turns
             },
             timestamp=time.time()
         )
+        
+        # Recursive function to handle multi-turn conversations
+        async for event in self._execute_conversation_turn(messages, function_calling_enabled, max_turns):
+            yield event
+    
+    async def _execute_conversation_turn(self, messages: list, function_calling_enabled: bool, turns_remaining: int) -> AsyncGenerator[Event, None]:
+        """Execute a single conversation turn with tool call handling."""
+        import time
+        
+        if turns_remaining <= 0:
+            self.logger.warning("Maximum conversation turns reached, ending conversation")
+            yield Event(
+                type=EventType.RUN_ERROR,
+                error="Maximum conversation turns reached",
+                data={"turns_remaining": turns_remaining},
+                timestamp=time.time()
+            )
+            return
         
         try:
             # Convert messages to proper format for LLM client
@@ -274,6 +352,7 @@ class ConversationOrchestrator:
             # Track conversation state for potential tool calls
             pending_tool_calls = {}
             assistant_content = ""
+            has_tool_calls = False
             
             # Stream LLM response and handle tool calls
             async for event in self.llm_client.generate_stream(formatted_messages, **generation_params):
@@ -289,6 +368,7 @@ class ConversationOrchestrator:
                     yield event  # Pass through the original event
                 
                 elif event.type == EventType.TOOL_CALL_START:
+                    has_tool_calls = True
                     pending_tool_calls[event.tool_call_id] = {
                         "name": event.tool_name,
                         "args": None
@@ -325,11 +405,15 @@ class ConversationOrchestrator:
                             )
                             
                             # Add tool result to messages for continued conversation
-                            formatted_messages.append({
+                            tool_message = {
                                 "role": "tool",
                                 "content": json.dumps(result),
                                 "tool_call_id": event.tool_call_id
-                            })
+                            }
+                            formatted_messages.append(tool_message)
+                            
+                            # Log successful tool execution
+                            self.logger.info(f"Successfully executed tool {tool_call['name']}: {result}")
                             
                         except Exception as tool_error:
                             self.logger.error(f"Tool execution error: {tool_error}")
@@ -346,17 +430,48 @@ class ConversationOrchestrator:
                             )
                             
                             # Add error result to messages
-                            formatted_messages.append({
+                            error_message = {
                                 "role": "tool",
                                 "content": json.dumps({"error": str(tool_error)}),
                                 "tool_call_id": event.tool_call_id
-                            })
+                            }
+                            formatted_messages.append(error_message)
+                            
+                            # Log tool execution error
+                            self.logger.error(f"Tool execution failed for {tool_call['name']}: {tool_error}")
                         
                         # Remove from pending
                         del pending_tool_calls[event.tool_call_id]
                 
                 elif event.type == EventType.RUN_FINISHED:
-                    # Add final assistant message to context
+                    # Check if we need to continue the conversation
+                    has_tool_results = any(msg.get("role") == "tool" for msg in formatted_messages[-10:])
+                    should_continue = has_tool_calls or has_tool_results
+                    
+                    if should_continue and turns_remaining > 1:
+                        # Add assistant message to conversation if we have content
+                        if assistant_content.strip():
+                            assistant_message = {
+                                "role": "assistant",
+                                "content": assistant_content.strip()
+                            }
+                            formatted_messages.append(assistant_message)
+                            self.logger.info(f"Added assistant response to conversation: {assistant_content[:50]}...")
+                        
+                        # Check for post-tool warnings (topic drift and token limits)
+                        await self._check_post_tool_warnings(formatted_messages)
+                        
+                        # Continue conversation with updated context
+                        self.logger.info(f"Continuing conversation (turns remaining: {turns_remaining - 1})")
+                        async for follow_up_event in self._execute_conversation_turn(
+                            formatted_messages, 
+                            function_calling_enabled, 
+                            turns_remaining - 1
+                        ):
+                            yield follow_up_event
+                        return  # Don't process further, recursive call handles it
+                    
+                    # Final turn - add assistant message to context and end
                     if assistant_content.strip():
                         assistant_message = AssistantMessage(content=assistant_content.strip())
                         self.context_manager.add_message_to_queue(assistant_message)
@@ -369,7 +484,9 @@ class ConversationOrchestrator:
                                     "role": assistant_message.role.value,
                                     "content": assistant_message.content
                                 },
-                                "tool_calls_executed": len(pending_tool_calls) == 0
+                                "tool_calls_executed": len(pending_tool_calls) == 0,
+                                "conversation_turns": 5 - turns_remaining + 1,
+                                "final_turn": True
                             },
                             timestamp=time.time()
                         )
@@ -384,6 +501,56 @@ class ConversationOrchestrator:
                 error=str(e),
                 timestamp=time.time()
             )
+    
+    async def _check_post_tool_warnings(self, formatted_messages: list) -> None:
+        """
+        Check for topic drift and token limit warnings after tool execution.
+        Adds warning messages to the conversation if needed.
+        """
+        import time
+        from ..types import AssistantMessage
+        
+        try:
+            # Check for topic drift on recent assistant messages
+            recent_assistant_messages = [
+                msg for msg in formatted_messages[-5:] 
+                if msg.get("role") == "assistant" and msg.get("content", "").strip()
+            ]
+            
+            if recent_assistant_messages:
+                # Create a temporary message for drift detection
+                last_assistant_content = recent_assistant_messages[-1]["content"]
+                temp_message = AssistantMessage(content=last_assistant_content)
+                
+                # Check for topic drift
+                drift_detected = await self._detect_topic_drift(temp_message)
+                if drift_detected:
+                    drift_warning = {
+                        "role": "assistant", 
+                        "content": "TOPIC DRIFT DETECTED: The conversation topic has changed significantly after the tool execution. I should consider saving the current context."
+                    }
+                    formatted_messages.append(drift_warning)
+                    self.logger.info("Added post-tool topic drift warning")
+            
+            # Check token usage (this needs to be estimated from formatted_messages)
+            estimated_tokens = self._estimate_token_count(formatted_messages)
+            max_tokens = getattr(self.context_manager.context, 'max_tokens', 4000)
+            if estimated_tokens > max_tokens * 0.7:
+                token_warning = {
+                    "role": "assistant",
+                    "content": f"TOKEN LIMIT WARNING: Context is getting full after tool execution ({estimated_tokens} tokens). I should consider evicting old topics to make room."
+                }
+                formatted_messages.append(token_warning)
+                self.logger.info(f"Added post-tool token limit warning: {estimated_tokens} tokens")
+                
+        except Exception as e:
+            self.logger.error(f"Error checking post-tool warnings: {e}")
+    
+    def _estimate_token_count(self, formatted_messages: list) -> int:
+        """Estimate token count for formatted messages."""
+        total_chars = sum(len(str(msg.get("content", ""))) for msg in formatted_messages)
+        # Rough estimation: ~4 characters per token
+        return total_chars // 4
     
     def _register_context_management_functions(self):
         """Register context management functions that the LLM can call."""
@@ -463,8 +630,9 @@ class ConversationOrchestrator:
     def get_status(self) -> Dict[str, Any]:
         """Get current orchestrator status."""
         status_data = {
+            "status": "active",  # Fixed: Add status field required by API
             "context_summary": self.context_manager.get_context_summary(),
-            "registered_tools": list(self.tool_handlers.keys()),
+            "registered_tools": list(self.tool_executor.get_registered_tools()),  # Fixed: Use tool_executor
             "topic_drift": self._get_drift_statistics()
         }
         

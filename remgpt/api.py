@@ -5,17 +5,33 @@ FastAPI application for RemGPT with streaming message processing.
 import asyncio
 import json
 import logging
+import uuid
+import time
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .orchestration import ConversationOrchestrator, create_orchestrator
 from .llm import Event
 from .context import create_context_manager
 from .types import Message, UserMessage, MessageRole
+from .config import get_config
+
+
+# Error Handling
+# =============
+
+class RemGPTError(BaseModel):
+    """Standard error response model."""
+    error: str
+    message: str
+    request_id: str
+    timestamp: float
+    details: Optional[Dict[str, Any]] = None
 
 
 # AUTHENTICATION ASSUMPTIONS:
@@ -189,6 +205,69 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+
+# Global Exception Handlers
+# =========================
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle request validation errors."""
+    request_id = str(uuid.uuid4())
+    logger.error(f"Validation error for request {request_id}: {exc.errors()}")
+    
+    return JSONResponse(
+        status_code=422,
+        content=RemGPTError(
+            error="VALIDATION_ERROR",
+            message="Invalid request data",
+            request_id=request_id,
+            timestamp=time.time(),
+            details={"validation_errors": exc.errors()}
+        ).model_dump()
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions with consistent format."""
+    request_id = str(uuid.uuid4())
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=RemGPTError(
+            error="HTTP_ERROR",
+            message=exc.detail,
+            request_id=request_id,
+            timestamp=time.time(),
+            details={"status_code": exc.status_code}
+        ).model_dump(),
+        headers=getattr(exc, 'headers', None)
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected exceptions."""
+    request_id = str(uuid.uuid4())
+    logger.error(f"Unhandled exception for request {request_id}: {exc}", exc_info=True)
+    
+    # Don't expose internal error details in production
+    config = get_config()
+    details = {"exception_type": type(exc).__name__}
+    if config.debug:
+        details["exception_message"] = str(exc)
+    
+    return JSONResponse(
+        status_code=500,
+        content=RemGPTError(
+            error="INTERNAL_SERVER_ERROR",
+            message="An internal server error occurred",
+            request_id=request_id,
+            timestamp=time.time(),
+            details=details
+        ).model_dump()
+    )
 
 
 async def process_message_queue():
@@ -412,7 +491,7 @@ async def configure_context(
         
     except Exception as e:
         logger.error(f"Error configuring context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to configure context: {str(e)}")
 
 
 @app.get("/context/status")
@@ -489,7 +568,7 @@ async def register_tool(
             "status": "success",
             "message": f"Tool '{tool_name}' registered successfully",
             "registered_by": current_user,
-            "registered_tools": list(orchestrator.tool_handlers.keys())
+            "registered_tools": list(orchestrator.tool_executor.get_registered_tools())
         }
     except Exception as e:
         logger.error(f"Error registering tool: {e}")

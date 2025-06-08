@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Generator, Optional
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from .events import Event
 
 
@@ -18,7 +18,7 @@ class BaseLLMClient(ABC):
         self.config = kwargs
     
     @abstractmethod
-    def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> Generator[Event, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[Event, None]:
         """
         Generate streaming response from the LLM.
         

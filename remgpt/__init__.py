@@ -20,7 +20,7 @@ from .context import (
     create_context_manager,
     create_context_with_config
 )
-from .orchestration import ConversationOrchestrator
+from .orchestration import ConversationOrchestrator, create_orchestrator, create_orchestrator_with_config
 from .detection import TopicDriftDetector, PageHinkleyTest, EmbeddingResult
 from .summarization import TopicSummarizer, Topic
 from .storage import VectorDatabase, QdrantVectorDatabase, InMemoryVectorDatabase
@@ -47,6 +47,7 @@ from .types import (
     ImageContent,
     ToolCall
 )
+from .config import get_config, RemGPTConfig
 
 __all__ = [
     "LLMContext",
@@ -61,6 +62,8 @@ __all__ = [
     "create_context_manager",
     "create_context_with_config",
     "ConversationOrchestrator",
+    "create_orchestrator",
+    "create_orchestrator_with_config",
     "TopicDriftDetector",
     "PageHinkleyTest",
     "EmbeddingResult",
@@ -89,4 +92,6 @@ __all__ = [
     "TextContent",
     "ImageContent",
     "ToolCall",
+    "get_config",
+    "RemGPTConfig",
 ] 

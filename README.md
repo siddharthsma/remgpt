@@ -21,6 +21,44 @@ pip install "numpy<2.0"  # Ensure compatibility
 pip install remgpt
 ```
 
+### Live Demo
+Want to see RemGPT in action? Run our comprehensive demo that showcases real OpenAI integration:
+
+```bash
+cd examples
+# Add your OpenAI API key to .env file
+echo "OPENAI_API_KEY=your-key-here" > .env
+python openai_demo.py
+```
+
+**Demo Features Demonstrated:**
+- ✅ Real OpenAI gpt-4o-mini API integration
+- ✅ Topic drift detection (similarity=0.016 for major topic changes)
+- ✅ Automatic memory management (save_current_topic tool triggered)
+- ✅ Context tracking (372→770 tokens across conversation)
+- ✅ Streaming responses with 1,774 character responses
+- ✅ Multi-turn conversations with tool calling
+
+**Demo Output Example:**
+```
+🚀 RemGPT LLM Client System Demonstration
+✅ API key loaded: sk-proj-i_6G6ta...
+✅ OpenAI client created: gpt-4o-mini
+✅ Context manager: 372 tokens
+✅ Orchestrator: 2 tools
+
+💬 Testing real OpenAI conversation...
+👤 User: Hello! Can you explain the key principles of microservices architecture?
+🤖 Assistant: [1,774 character detailed response about microservices...]
+
+👤 User: Now let's switch topics completely. I'm having issues with Python async/await patterns...
+🤖 Assistant: [Topic drift detected: similarity=0.016]
+🔧 Tool: save_current_topic [Auto-triggered for memory management]
+
+📊 Final Stats:
+  • Total tokens: 770 • Topics: 0 • Queue size: 4
+```
+
 ### Basic Usage
 ```python
 from remgpt import LLMClientFactory, ToolExecutor, ConversationOrchestrator

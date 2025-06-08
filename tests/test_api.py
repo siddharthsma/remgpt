@@ -147,7 +147,8 @@ class TestMessageStreaming:
         response = client.post("/messages/stream", json=message_data)
         
         assert response.status_code == 401
-        assert "Missing Authorization header" in response.json()["detail"]
+        response_data = response.json()
+        assert "Missing Authorization header" in response_data.get("message", response_data.get("detail", ""))
     
     @pytest.mark.streaming
     def test_stream_message_invalid_auth(self, client):
@@ -158,7 +159,8 @@ class TestMessageStreaming:
         response = client.post("/messages/stream", headers=headers, json=message_data)
         
         assert response.status_code == 401
-        assert "Invalid authorization format" in response.json()["detail"]
+        response_data = response.json()
+        assert "Invalid authorization format" in response_data.get("message", response_data.get("detail", ""))
     
     @pytest.mark.streaming
     def test_stream_message_service_not_initialized(self, client):
@@ -172,7 +174,8 @@ class TestMessageStreaming:
             response = client.post("/messages/stream", headers=headers, json=message_data)
             
             assert response.status_code == 503
-            assert "Service not initialized" in response.json()["detail"]
+            response_data = response.json()
+            assert "Service not initialized" in response_data.get("message", response_data.get("detail", ""))
 
 
 # SSE Formatting Tests
@@ -185,7 +188,7 @@ class TestSSEFormatting:
     @pytest.mark.asyncio
     async def test_format_sse_basic_event(self):
         """Test formatting basic SSE event."""
-        event = StreamEvent(
+        event = Event(
             type="test_event",
             data={"message": "Hello World"},
             timestamp=1640995200.0
@@ -200,7 +203,7 @@ class TestSSEFormatting:
     @pytest.mark.asyncio
     async def test_format_sse_complex_data(self):
         """Test formatting SSE event with complex data."""
-        event = StreamEvent(
+        event = Event(
             type="llm_response_chunk",
             data={
                 "content": "This is a response",
@@ -225,8 +228,8 @@ class TestSSEFormatting:
         # Create mock queue with events
         mock_queue = AsyncMock()
         events = [
-            StreamEvent("start", {"phase": "beginning"}, 1640995200.0),
-            StreamEvent("progress", {"step": 1}, 1640995201.0),
+            Event(type="start", data={"phase": "beginning"}, timestamp=1640995200.0),
+            Event(type="progress", data={"step": 1}, timestamp=1640995201.0),
             None  # Completion signal
         ]
         mock_queue.get.side_effect = events
@@ -417,9 +420,9 @@ class TestIntegration:
             
             # Create test events
             test_events = [
-                StreamEvent("processing_start", {}, 1640995200.0),
-                StreamEvent("llm_response_chunk", {"content": "Hello!"}, 1640995201.0),
-                StreamEvent("processing_complete", {}, 1640995202.0)
+                Event(type="processing_start", data={}, timestamp=1640995200.0),
+                Event(type="llm_response_chunk", data={"content": "Hello!"}, timestamp=1640995201.0),
+                Event(type="processing_complete", data={}, timestamp=1640995202.0)
             ]
             
             async def mock_process_message(message):
@@ -462,7 +465,9 @@ class TestErrorHandling:
             response = client.get(endpoint)
         
         assert response.status_code == 401
-        assert "Authorization" in response.json()["detail"] or "Missing" in response.json()["detail"]
+        response_data = response.json()
+        error_text = response_data.get("message", response_data.get("detail", ""))
+        assert "Authorization" in error_text or "Missing" in error_text
     
     def test_invalid_json_handling(self, client):
         """Test handling of invalid JSON in requests."""
@@ -515,7 +520,7 @@ class TestPerformance:
         
         # Create 100 events plus completion signal
         events = [
-            StreamEvent(f"event_{i}", {"data": i}, float(i))
+            Event(type=f"event_{i}", data={"data": i}, timestamp=float(i))
             for i in range(100)
         ] + [None]
         

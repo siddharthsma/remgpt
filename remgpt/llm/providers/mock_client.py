@@ -23,6 +23,8 @@ class MockLLMClient(BaseLLMClient):
         super().__init__(model_name, **kwargs)
         self.response_delay = kwargs.get("response_delay", 0.1)
         self.simulate_streaming = kwargs.get("simulate_streaming", True)
+        self.multi_turn_responses = []
+        self.current_turn = 0
         
     async def generate_stream(self, messages: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[Event, None]:
         """
@@ -50,20 +52,36 @@ class MockLLMClient(BaseLLMClient):
         if self.response_delay > 0:
             await asyncio.sleep(self.response_delay)
         
-        # Analyze messages for context management needs
-        function_calls_needed = self._analyze_messages_for_function_calls(messages)
-        response_content = ""
+        # Check if we have configured multi-turn responses
+        if self.multi_turn_responses and self.current_turn < len(self.multi_turn_responses):
+            # Use configured response for this turn
+            current_response = self.multi_turn_responses[self.current_turn]
+            response_content = current_response.get("content", "")
+            function_calls_needed = current_response.get("tool_calls", [])
+            self.current_turn += 1
+        else:
+            # Fallback to original behavior
+            function_calls_needed = self._analyze_messages_for_function_calls(messages)
+            response_content = ""
         
         # Handle function calls if needed
         if function_calls_needed:
             for i, func_call in enumerate(function_calls_needed):
-                call_id = f"mock_call_{i+1}"
+                # Handle both old format (dict with name/args) and new format (dict with id/name/args)
+                if "id" in func_call:
+                    call_id = func_call["id"]
+                    tool_name = func_call["name"]
+                    tool_args = func_call.get("args", {})
+                else:
+                    call_id = f"mock_call_{i+1}"
+                    tool_name = func_call["name"]
+                    tool_args = func_call.get("args", {})
                 
                 # Tool call start
                 yield Event(
                     type=EventType.TOOL_CALL_START,
                     tool_call_id=call_id,
-                    tool_name=func_call["name"],
+                    tool_name=tool_name,
                     timestamp=time.time()
                 )
                 
@@ -71,7 +89,7 @@ class MockLLMClient(BaseLLMClient):
                 yield Event(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=call_id,
-                    tool_args=func_call["args"],
+                    tool_args=tool_args,
                     timestamp=time.time()
                 )
                 
@@ -86,12 +104,13 @@ class MockLLMClient(BaseLLMClient):
                 if self.response_delay > 0:
                     await asyncio.sleep(self.response_delay * 0.5)
         
-        # Generate mock response content
-        if function_calls_needed:
-            function_names = [fc["name"] for fc in function_calls_needed]
-            response_content = f"I've handled the context management tasks: {', '.join(function_names)}. How can I help you now?"
-        else:
-            response_content = "I understand your message. How can I assist you today?"
+        # Generate mock response content if not already set
+        if not response_content:
+            if function_calls_needed:
+                function_names = [fc.get("name", "unknown") for fc in function_calls_needed]
+                response_content = f"I've handled the context management tasks: {', '.join(function_names)}. How can I help you now?"
+            else:
+                response_content = "I understand your message. How can I assist you today?"
         
         # Stream the text response
         if self.simulate_streaming:
@@ -230,4 +249,14 @@ class MockLLMClient(BaseLLMClient):
         Args:
             streaming: Whether to simulate streaming responses
         """
-        self.simulate_streaming = streaming 
+        self.simulate_streaming = streaming
+    
+    def configure_multi_turn_responses(self, responses: List[Dict[str, Any]]):
+        """
+        Configure multi-turn responses for testing.
+        
+        Args:
+            responses: List of response dictionaries with 'content' and 'tool_calls'
+        """
+        self.multi_turn_responses = responses
+        self.current_turn = 0 
