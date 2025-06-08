@@ -12,7 +12,8 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .orchestration import ConversationOrchestrator, StreamEvent
+from .orchestration import ConversationOrchestrator
+from .llm import Event
 from .context import create_context_manager
 from .types import Message, UserMessage, MessageRole
 
@@ -41,7 +42,7 @@ class ContextConfig(BaseModel):
     system_instructions: str = Field(default="", description="System instructions")
     memory_content: str = Field(default="", description="Memory content")
     tools: list = Field(default_factory=list, description="Tool definitions")
-    model: str = Field(default="gpt-3.5-turbo", description="Model name")
+    model: str = Field(default="gpt-4", description="Model name")
 
 
 class StatusResponse(BaseModel):
@@ -151,7 +152,7 @@ async def lifespan(app: FastAPI):
     context_manager = create_context_manager(
         max_tokens=4000,
         system_instructions="You are a helpful AI assistant.",
-        model="gpt-3.5-turbo"
+        model="gpt-4"
     )
     
     orchestrator = ConversationOrchestrator(context_manager=context_manager)
@@ -218,7 +219,7 @@ async def process_message_queue():
             logger.error(f"Error in message processing: {e}")
             # Put error event in response queue if available
             if 'response_queue' in locals():
-                error_event = StreamEvent(
+                error_event = Event(
                     type="error",
                     data={"error": str(e), "error_type": type(e).__name__},
                     timestamp=asyncio.get_event_loop().time()
@@ -227,7 +228,7 @@ async def process_message_queue():
                 await response_queue.put(None)
 
 
-async def format_sse(event: StreamEvent) -> str:
+async def format_sse(event: Event) -> str:
     """Format event as Server-Sent Event."""
     data = {
         "type": event.type,

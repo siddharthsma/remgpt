@@ -10,7 +10,7 @@ from ..types import Message
 class TokenCounter:
     """Utility class for counting tokens in messages."""
     
-    def __init__(self, model: str = "gpt-3.5-turbo"):
+    def __init__(self, model: str = "gpt-4"):
         """Initialize with specific model encoding."""
         try:
             self.encoding = tiktoken.encoding_for_model(model)

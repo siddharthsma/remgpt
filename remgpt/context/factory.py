@@ -20,7 +20,7 @@ def create_context_manager(
     system_instructions: str = "",
     memory_content: str = "",
     tools: Optional[List[Dict[str, Any]]] = None,
-    model: str = "gpt-3.5-turbo",
+    model: str = "gpt-4",
     logger: Optional[logging.Logger] = None
 ) -> LLMContextManager:
     """
@@ -73,7 +73,7 @@ def create_context_with_config(
             - system_instructions: str (optional)
             - memory_content: str (optional)
             - tools: List[Dict[str, Any]] (optional)
-            - model: str (optional, defaults to "gpt-3.5-turbo")
+            - model: str (optional, defaults to "gpt-4")
             - logger: logging.Logger (optional)
             
     Returns:
@@ -88,6 +88,6 @@ def create_context_with_config(
         system_instructions=config.get("system_instructions", ""),
         memory_content=config.get("memory_content", ""),
         tools=config.get("tools"),
-        model=config.get("model", "gpt-3.5-turbo"),
+        model=config.get("model", "gpt-4"),
         logger=config.get("logger")
     ) 

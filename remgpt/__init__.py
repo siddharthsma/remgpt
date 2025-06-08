@@ -20,10 +20,20 @@ from .context import (
     create_context_manager,
     create_context_with_config
 )
-from .orchestration import ConversationOrchestrator, StreamEvent, OrchestratorStatus
+from .orchestration import ConversationOrchestrator
 from .detection import TopicDriftDetector, PageHinkleyTest, EmbeddingResult
 from .summarization import TopicSummarizer, Topic
 from .storage import VectorDatabase, QdrantVectorDatabase, InMemoryVectorDatabase
+from .llm import (
+    BaseLLMClient,
+    LLMClientFactory,
+    OpenAIClient,
+    ClaudeClient,
+    GeminiClient,
+    Event,
+    EventType
+)
+from .tools import ToolExecutor, BaseTool
 from .types import (
     Message,
     SystemMessage,
@@ -51,8 +61,6 @@ __all__ = [
     "create_context_manager",
     "create_context_with_config",
     "ConversationOrchestrator",
-    "StreamEvent",
-    "OrchestratorStatus",
     "TopicDriftDetector",
     "PageHinkleyTest",
     "EmbeddingResult",
@@ -61,6 +69,15 @@ __all__ = [
     "VectorDatabase",
     "QdrantVectorDatabase", 
     "InMemoryVectorDatabase",
+    "BaseLLMClient",
+    "LLMClientFactory", 
+    "OpenAIClient",
+    "ClaudeClient",
+    "GeminiClient",
+    "Event",
+    "EventType",
+    "ToolExecutor",
+    "BaseTool",
     "Message",
     "SystemMessage",
     "UserMessage", 

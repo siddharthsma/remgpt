@@ -14,18 +14,18 @@ from ..summarization import Topic
 class LLMContextManager:
     """Manager for LLM context with token limit monitoring."""
     
-    def __init__(self, max_tokens: int, model: str = "gpt-3.5-turbo", logger: Optional[logging.Logger] = None):
+    def __init__(self, max_tokens: int, model: str = "gpt-4", logger: Optional[logging.Logger] = None):
         """
         Initialize context manager.
         
         Args:
             max_tokens: Maximum total tokens allowed (for monitoring)
-            model: Model name for token counting
+            model: Model name for token counting (defaults to gpt-4 for modern tokenizer)
             logger: Optional logger instance
         """
         self.max_tokens = max_tokens
-        self.model = model
         self.logger = logger or logging.getLogger(__name__)
+        # Only pass model to TokenCounter where it's actually needed
         self.token_counter = TokenCounter(model)
         self.context = LLMContext(self.token_counter, logger=self.logger)
     
