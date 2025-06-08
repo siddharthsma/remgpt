@@ -20,7 +20,6 @@ def create_context_manager(
     system_instructions: str = "",
     memory_content: str = "",
     tools: Optional[List[Dict[str, Any]]] = None,
-    model: str = "gpt-4",
     logger: Optional[logging.Logger] = None
 ) -> LLMContextManager:
     """
@@ -34,13 +33,15 @@ def create_context_manager(
         system_instructions: Initial system instructions
         memory_content: Initial memory content
         tools: Initial tool definitions list
-        model: Model name for token counting
         logger: Optional logger instance
         
     Returns:
         Configured LLMContextManager
+        
+    Note: Token counting will automatically adapt to the LLM client when connected
+    via the orchestrator. No need to specify model here.
     """
-    manager = LLMContextManager(max_tokens=max_tokens, model=model, logger=logger)
+    manager = LLMContextManager(max_tokens=max_tokens, logger=logger)
     
     # Replace the default read-only blocks with ones containing initial content
     if system_instructions:
@@ -73,11 +74,13 @@ def create_context_with_config(
             - system_instructions: str (optional)
             - memory_content: str (optional)
             - tools: List[Dict[str, Any]] (optional)
-            - model: str (optional, defaults to "gpt-4")
             - logger: logging.Logger (optional)
             
     Returns:
         Configured LLMContextManager
+        
+    Note: The 'model' key is no longer needed in config since token counting
+    adapts automatically to the LLM client.
     """
     max_tokens = config.get("max_tokens")
     if not max_tokens:
@@ -88,6 +91,5 @@ def create_context_with_config(
         system_instructions=config.get("system_instructions", ""),
         memory_content=config.get("memory_content", ""),
         tools=config.get("tools"),
-        model=config.get("model", "gpt-4"),
         logger=config.get("logger")
     ) 

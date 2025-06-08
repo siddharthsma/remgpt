@@ -2,7 +2,7 @@
 LLM Context Manager class for token limit monitoring.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import logging
 import numpy as np
 from .token_counter import TokenCounter
@@ -10,24 +10,42 @@ from .llm_context import LLMContext
 from ..types import Message
 from ..summarization import Topic
 
+if TYPE_CHECKING:
+    from ..llm import BaseLLMClient
+
 
 class LLMContextManager:
     """Manager for LLM context with token limit monitoring."""
     
-    def __init__(self, max_tokens: int, model: str = "gpt-4", logger: Optional[logging.Logger] = None):
+    def __init__(self, max_tokens: int, logger: Optional[logging.Logger] = None):
         """
         Initialize context manager.
         
         Args:
             max_tokens: Maximum total tokens allowed (for monitoring)
-            model: Model name for token counting (defaults to gpt-4 for modern tokenizer)
             logger: Optional logger instance
+            
+        Note: Token counting will automatically use the correct tokenizer when an LLM client
+        is connected via the orchestrator. Until then, it uses a sensible default (GPT-4).
         """
         self.max_tokens = max_tokens
         self.logger = logger or logging.getLogger(__name__)
-        # Only pass model to TokenCounter where it's actually needed
-        self.token_counter = TokenCounter(model)
+        # TokenCounter will use GPT-4 tokenizer as default
+        self.token_counter = TokenCounter()
         self.context = LLMContext(self.token_counter, logger=self.logger)
+    
+    def sync_with_llm_client(self, llm_client: "BaseLLMClient"):
+        """
+        Synchronize token counting with the actual LLM client being used.
+        
+        This ensures that token counting matches the actual model being used,
+        providing accurate token limits and usage tracking.
+        
+        Args:
+            llm_client: The LLM client that will be used for generation
+        """
+        self.token_counter.update_from_llm_client(llm_client)
+        self.logger.info(f"Token counter synchronized with LLM model: {self.token_counter.model_used}")
     
     def check_token_limit(self) -> bool:
         """

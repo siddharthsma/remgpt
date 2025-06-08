@@ -42,7 +42,9 @@ class ContextConfig(BaseModel):
     system_instructions: str = Field(default="", description="System instructions")
     memory_content: str = Field(default="", description="Memory content")
     tools: list = Field(default_factory=list, description="Tool definitions")
-    model: str = Field(default="gpt-4", description="Model name")
+    
+    # Note: Model is no longer needed here since token counting automatically
+    # adapts to the LLM client used by the orchestrator
 
 
 class StatusResponse(BaseModel):
@@ -151,8 +153,7 @@ async def lifespan(app: FastAPI):
     # Initialize with default context manager
     context_manager = create_context_manager(
         max_tokens=4000,
-        system_instructions="You are a helpful AI assistant.",
-        model="gpt-4"
+        system_instructions="You are a helpful AI assistant."
     )
     
     orchestrator = ConversationOrchestrator(context_manager=context_manager)
@@ -378,8 +379,7 @@ async def configure_context(
             max_tokens=config.max_tokens,
             system_instructions=config.system_instructions,
             memory_content=config.memory_content,
-            tools=config.tools,
-            model=config.model
+            tools=config.tools
         )
         
         # Update orchestrator

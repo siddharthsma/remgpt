@@ -57,6 +57,10 @@ class ConversationOrchestrator:
         self.tool_executor = tool_executor or ToolExecutor()
         self.logger = logger or logging.getLogger(__name__)
         
+        # Automatically sync context manager with LLM client for accurate token counting
+        if self.llm_client:
+            self.context_manager.sync_with_llm_client(self.llm_client)
+        
         # Tool/function registry
         self.tool_handlers: Dict[str, Callable] = {}
         
