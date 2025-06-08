@@ -6,7 +6,7 @@ Updated to use the unified Event system, with OrchestratorStatus removed.
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, Dict, Any, Optional, Callable, Awaitable
+from typing import AsyncGenerator, Dict, Any, Optional, Callable, Awaitable, List
 
 from ..context import LLMContextManager
 from ..types import Message, UserMessage, AssistantMessage, ToolMessage
@@ -39,7 +39,10 @@ class ConversationOrchestrator:
         tool_executor: Optional[ToolExecutor] = None,
         vector_database: Optional[VectorDatabase] = None,
         drift_detection_config: Optional[Dict[str, Any]] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        # Remote tool configuration
+        mcp_servers: Optional[List[str]] = None,
+        a2a_agents: Optional[List[str]] = None
     ):
         """
         Initialize the orchestrator.
@@ -51,6 +54,8 @@ class ConversationOrchestrator:
             vector_database: Vector database for storing topics
             drift_detection_config: Configuration for drift detection
             logger: Optional logger instance
+            mcp_servers: List of MCP server URLs or paths
+            a2a_agents: List of A2A agent base URLs
         """
         self.context_manager = context_manager
         self.llm_client = llm_client
@@ -63,6 +68,11 @@ class ConversationOrchestrator:
         
         # Tool/function registry
         self.tool_handlers: Dict[str, Callable] = {}
+        
+        # Remote tool configuration
+        self.mcp_servers = mcp_servers or []
+        self.a2a_agents = a2a_agents or []
+        self.remote_tool_manager = None
         
         # Topic drift detection (always enabled)
         self.vector_db = vector_database or InMemoryVectorDatabase(logger=self.logger)
@@ -92,6 +102,48 @@ class ConversationOrchestrator:
         )
         
         self.logger.info("Topic drift detection components initialized")
+    
+    async def initialize_remote_tools(self):
+        """Initialize remote MCP and A2A tools."""
+        if not self.mcp_servers and not self.a2a_agents:
+            return
+        
+        try:
+            from ..tools.remote import RemoteToolManager
+            self.remote_tool_manager = RemoteToolManager()
+            
+            # Initialize MCP servers
+            if self.mcp_servers:
+                self.logger.info(f"Connecting to {len(self.mcp_servers)} MCP servers...")
+                mcp_tools = await self.remote_tool_manager.add_mcp_servers(self.mcp_servers)
+                
+                # Register MCP tools with the tool executor
+                for tool in mcp_tools:
+                    self.tool_executor.register_tool(tool)
+                
+                self.logger.info(f"Registered {len(mcp_tools)} MCP tools")
+            
+            # Initialize A2A agents
+            if self.a2a_agents:
+                self.logger.info(f"Connecting to {len(self.a2a_agents)} A2A agents...")
+                a2a_tools = await self.remote_tool_manager.add_a2a_agents(self.a2a_agents)
+                
+                # Register A2A tools with the tool executor
+                for tool in a2a_tools:
+                    self.tool_executor.register_tool(tool)
+                
+                self.logger.info(f"Registered {len(a2a_tools)} A2A tools")
+                
+        except ImportError as e:
+            self.logger.warning(f"Remote tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize remote tools: {e}")
+    
+    async def cleanup_remote_tools(self):
+        """Clean up remote tool connections."""
+        if self.remote_tool_manager:
+            await self.remote_tool_manager.cleanup()
+            self.remote_tool_manager = None
     
     def register_tool_handler(self, tool_name: str, handler: Callable):
         """Register a handler for a specific tool/function."""

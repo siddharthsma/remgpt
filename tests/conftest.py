@@ -134,4 +134,59 @@ pytest.mark.unit = pytest.mark.unit
 pytest.mark.integration = pytest.mark.integration
 pytest.mark.auth = pytest.mark.auth
 pytest.mark.streaming = pytest.mark.streaming
-pytest.mark.performance = pytest.mark.performance 
+pytest.mark.performance = pytest.mark.performance
+
+
+@pytest.fixture
+def mock_logger():
+    """Provide a mock logger for tests."""
+    return Mock()
+
+
+@pytest.fixture
+def sample_tool_schema():
+    """Provide a sample tool schema for testing."""
+    return {
+        "name": "sample_tool",
+        "description": "A sample tool for testing",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "input": {"type": "string", "description": "Input parameter"},
+                "count": {"type": "integer", "minimum": 1, "maximum": 10}
+            },
+            "required": ["input"]
+        }
+    }
+
+
+@pytest.fixture
+def sample_tool_schemas():
+    """Provide multiple sample tool schemas for testing."""
+    return [
+        {
+            "name": "tool_1",
+            "description": "First test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "param1": {"type": "string"}
+                },
+                "required": ["param1"]
+            }
+        },
+        {
+            "name": "tool_2",
+            "description": "Second test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "param2": {"type": "number"}
+                }
+            }
+        }
+    ]
+
+
+# Pytest configuration for async tests
+pytest_plugins = ['pytest_asyncio'] 

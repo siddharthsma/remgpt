@@ -5,14 +5,14 @@ FastAPI application for RemGPT with streaming message processing.
 import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .orchestration import ConversationOrchestrator
+from .orchestration import ConversationOrchestrator, create_orchestrator
 from .llm import Event
 from .context import create_context_manager
 from .types import Message, UserMessage, MessageRole
@@ -42,6 +42,10 @@ class ContextConfig(BaseModel):
     system_instructions: str = Field(default="", description="System instructions")
     memory_content: str = Field(default="", description="Memory content")
     tools: list = Field(default_factory=list, description="Tool definitions")
+    
+    # Remote tool configuration
+    mcp_servers: List[str] = Field(default_factory=list, description="MCP server URLs or paths")
+    a2a_agents: List[str] = Field(default_factory=list, description="A2A agent base URLs")
     
     # Note: Model is no longer needed here since token counting automatically
     # adapts to the LLM client used by the orchestrator
@@ -156,7 +160,11 @@ async def lifespan(app: FastAPI):
         system_instructions="You are a helpful AI assistant."
     )
     
-    orchestrator = ConversationOrchestrator(context_manager=context_manager)
+    # Initialize orchestrator with remote tool support
+    orchestrator = await create_orchestrator(
+        context_manager=context_manager,
+        auto_initialize_remote_tools=False  # No remote tools in default setup
+    )
     
     # Start background task to process queue
     task = asyncio.create_task(process_message_queue())
@@ -382,8 +390,18 @@ async def configure_context(
             tools=config.tools
         )
         
-        # Update orchestrator
-        orchestrator.context_manager = new_context_manager
+        # Create new orchestrator with remote tool support
+        new_orchestrator = await create_orchestrator(
+            context_manager=new_context_manager,
+            mcp_servers=config.mcp_servers,
+            a2a_agents=config.a2a_agents
+        )
+        
+        # Clean up old orchestrator and update global
+        if orchestrator and hasattr(orchestrator, 'cleanup_remote_tools'):
+            await orchestrator.cleanup_remote_tools()
+        
+        orchestrator = new_orchestrator
         
         return {
             "status": "success",
