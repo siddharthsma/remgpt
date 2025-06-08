@@ -29,7 +29,8 @@ You have access to special context management functions that help you manage you
 
 1. TOPIC DRIFT DETECTED:
    - When you receive a message stating "TOPIC DRIFT DETECTED", it means the conversation has shifted to a new topic
-   - You should call the 'save_current_topic' function to summarize and save the previous conversation topic
+   - You MUST immediately call the 'save_current_topic' function to summarize and save the previous conversation topic
+   - Do NOT just acknowledge the drift - you must actually invoke the function
    - Provide a clear, concise summary and key facts from the conversation
    - This will clear the conversation history and add the topic to your working memory
 
@@ -40,11 +41,12 @@ You have access to special context management functions that help you manage you
    - Only do this when explicitly warned about the token limit
 
 3. FUNCTION CALLING GUIDELINES:
-   - save_current_topic(topic_summary, topic_key_facts): Use when topic drift is detected
+   - save_current_topic(topic_summary, topic_key_facts): REQUIRED when topic drift is detected
      * topic_summary: A concise summary of the conversation topic (1-2 sentences)
      * topic_key_facts: List of important facts or decisions made (optional)
+     * Example: save_current_topic("Discussion about microservices architecture", ["Microservices are loosely coupled", "They enable independent deployment"])
    
-   - evict_oldest_topic(): Use when approaching token limit
+   - evict_oldest_topic(): REQUIRED when approaching token limit
      * No parameters needed, automatically removes the oldest topic
 
 4. IMPORTANT NOTES:

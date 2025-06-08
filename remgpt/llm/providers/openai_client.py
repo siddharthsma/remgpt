@@ -88,25 +88,32 @@ class OpenAIClient(BaseLLMClient):
                     
                     # Handle tool calls
                     if delta.tool_calls:
-                        for tool_call in delta.tool_calls:
-                            call_id = tool_call.id or str(uuid.uuid4())
+                        for i, tool_call in enumerate(delta.tool_calls):
+                            # Use index as the key since OpenAI sends ID only in first chunk
+                            call_key = tool_call.id if tool_call.id else f"index_{i}"
                             
-                            if call_id not in current_tool_calls:
-                                # New tool call
-                                current_tool_calls[call_id] = {
-                                    "name": tool_call.function.name if tool_call.function else "",
-                                    "args": ""
-                                }
-                                
-                                yield Event(
-                                    type=EventType.TOOL_CALL_START,
-                                    tool_call_id=call_id,
-                                    tool_name=tool_call.function.name if tool_call.function else ""
-                                )
+                            # If we have an ID, use it; otherwise find the existing call by index
+                            if not tool_call.id and len(current_tool_calls) > i:
+                                # Get the actual call_id from the existing tool calls (by order)
+                                call_key = list(current_tool_calls.keys())[i]
+                            
+                            if call_key not in current_tool_calls:
+                                # New tool call - only create if we have a function name
+                                if tool_call.function and tool_call.function.name:
+                                    current_tool_calls[call_key] = {
+                                        "name": tool_call.function.name,
+                                        "args": ""
+                                    }
+                                    
+                                    yield Event(
+                                        type=EventType.TOOL_CALL_START,
+                                        tool_call_id=call_key,
+                                        tool_name=tool_call.function.name
+                                    )
                             
                             # Accumulate arguments
                             if tool_call.function and tool_call.function.arguments:
-                                current_tool_calls[call_id]["args"] += tool_call.function.arguments
+                                current_tool_calls[call_key]["args"] += tool_call.function.arguments
             
             # End text message if we had content
             if current_content:
@@ -128,7 +135,7 @@ class OpenAIClient(BaseLLMClient):
                 except json.JSONDecodeError:
                     yield Event(
                         type=EventType.RUN_ERROR,
-                        error=f"Invalid tool arguments for call {call_id}"
+                        error=f"Invalid tool arguments for call {call_id}: {call_info['args']}"
                     )
             
             yield Event(type=EventType.RUN_FINISHED)

@@ -204,11 +204,14 @@ class ConversationOrchestrator:
                 drift_detected = await self._detect_topic_drift(message)
                 
                 if drift_detected:
-                    drift_warning = AssistantMessage(
-                        content="TOPIC DRIFT DETECTED: The conversation has shifted to a new topic. I should save the current conversation topic before continuing."
-                    )
-                    self.context_manager.add_message_to_queue(drift_warning)
-                    self.logger.info("Added topic drift warning to FIFO queue")
+                    # Instead of adding an assistant message, we'll modify the user message to include drift instruction
+                    # This ensures the conversation ends with a user message, which is required for tool calling
+                    original_content = message.content
+                    enhanced_content = f"{original_content}\n\n[SYSTEM INSTRUCTION: Topic drift detected. Before responding to this new topic, you must call the save_current_topic function to save the previous conversation topic.]"
+                    
+                    # Update the message content
+                    message.content = enhanced_content
+                    self.logger.info("Enhanced user message with topic drift instruction")
             
             # Step 3: Check token usage
             token_warning_added = False
