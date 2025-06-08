@@ -1,0 +1,10 @@
+# Testing dependencies for RemGPT
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+httpx>=0.24.0  # For FastAPI testing
+coverage>=7.0.0
+
+# Include base requirements
+-r requirements.txt 
