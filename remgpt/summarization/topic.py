@@ -33,18 +33,46 @@ class Topic:
         Convert topic to a system message for context.
         
         Returns:
-            SystemMessage containing the topic summary
+            SystemMessage containing the topic summary and key facts
         """
-        content_parts = [f"Topic: {self.summary}"]
+        content_parts = [f"📋 Topic: {self.summary}"]
         
-        if self.key_facts:
-            content_parts.append("Key facts:")
-            for fact in self.key_facts:
-                content_parts.append(f"- {fact}")
+        if self.key_facts and len(self.key_facts) > 0:
+            content_parts.append("")  # Add blank line for readability
+            content_parts.append("🔑 Key Facts:")
+            for i, fact in enumerate(self.key_facts, 1):
+                content_parts.append(f"   {i}. {fact}")
+        
+        # Add metadata for context
+        content_parts.append("")  # Add blank line
+        content_parts.append(f"💬 Messages: {self.message_count} | 🕒 Created: {self._format_timestamp()}")
         
         content = "\n".join(content_parts)
         
         return SystemMessage(content=content)
+    
+    def _format_timestamp(self) -> str:
+        """Format timestamp for display."""
+        import datetime
+        dt = datetime.datetime.fromtimestamp(self.timestamp)
+        return dt.strftime("%H:%M:%S")
+    
+    def get_key_facts_summary(self) -> str:
+        """
+        Get a condensed summary of key facts for quick reference.
+        
+        Returns:
+            Formatted string of key facts
+        """
+        if not self.key_facts:
+            return "No key facts recorded"
+        
+        if len(self.key_facts) <= 3:
+            return " | ".join(self.key_facts)
+        else:
+            # Show first 3 facts and indicate there are more
+            first_three = " | ".join(self.key_facts[:3])
+            return f"{first_three} | (+{len(self.key_facts) - 3} more)"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert topic to dictionary for storage."""

@@ -31,7 +31,7 @@ You have access to special context management functions that help you manage you
    - When you receive a message stating "TOPIC DRIFT DETECTED", it means the conversation has shifted to a new topic
    - You MUST immediately call the 'save_current_topic' function to summarize and save the previous conversation topic
    - Do NOT just acknowledge the drift - you must actually invoke the function
-   - Provide a clear, concise summary and key facts from the conversation
+   - Provide a clear, concise summary and DETAILED key facts from the conversation
    - This will clear the conversation history and add the topic to your working memory
 
 2. APPROACHING TOKEN LIMIT:
@@ -43,17 +43,37 @@ You have access to special context management functions that help you manage you
 3. FUNCTION CALLING GUIDELINES:
    - save_current_topic(topic_summary, topic_key_facts): REQUIRED when topic drift is detected
      * topic_summary: A concise summary of the conversation topic (1-2 sentences)
-     * topic_key_facts: List of important facts or decisions made (optional)
-     * Example: save_current_topic("Discussion about microservices architecture", ["Microservices are loosely coupled", "They enable independent deployment"])
+     * topic_key_facts: List of SPECIFIC, ACTIONABLE facts learned (HIGHLY IMPORTANT!)
+     
+     📋 KEY FACTS GUIDELINES:
+     • Extract concrete information, decisions, or insights from the conversation
+     • Include specific technical details, names, numbers, or processes mentioned
+     • Focus on facts that would be useful for future reference
+     * Example: save_current_topic(
+         "Discussion about microservices architecture principles and implementation strategies",
+         [
+             "Microservices are loosely coupled services that communicate via APIs",
+             "Each service should have a single responsibility and own its data",
+             "Service discovery patterns include client-side and server-side discovery",
+             "Circuit breaker pattern prevents cascade failures between services",
+             "User prefers Docker containerization with Kubernetes orchestration"
+         ]
+       )
    
    - evict_oldest_topic(): REQUIRED when approaching token limit
      * No parameters needed, automatically removes the oldest topic
 
-4. IMPORTANT NOTES:
+4. KEY FACTS ARE CRITICAL FOR MEMORY:
+   - Key facts become part of your working context and help you remember important details
+   - They are displayed prominently when topics are recalled
+   - Include specific details that would help you provide better assistance in future conversations
+   - Think of them as your "memory anchors" for each topic
+
+5. IMPORTANT NOTES:
    - These functions are for context management only - use them when prompted by the system
    - Regular conversations do not require these functions
-   - Your working memory contains saved topics that provide context for ongoing conversations
-   - Always prioritize the current conversation while being aware of saved topics for context"""
+   - Your working memory contains saved topics with their key facts for context
+   - Always prioritize the current conversation while leveraging saved key facts for better assistance"""
     
     def to_messages(self) -> List[Message]:
         """Convert to system message."""

@@ -166,7 +166,7 @@ class LLMContextManager:
         Get list of topics in working context.
         
         Returns:
-            List of topic summaries
+            List of topic summaries with key facts
         """
         topics = self.context.working_context.get_topics()
         return [
@@ -174,11 +174,34 @@ class LLMContextManager:
                 "id": topic.id,
                 "summary": topic.summary,
                 "key_facts": topic.key_facts,
+                "key_facts_count": len(topic.key_facts),
                 "message_count": topic.message_count,
-                "created_at": topic.created_at
+                "timestamp": topic.timestamp,
+                "created_at": topic._format_timestamp()
             }
             for topic in topics
         ]
+    
+    def get_all_key_facts(self) -> List[Dict[str, Any]]:
+        """
+        Get all key facts from working context topics.
+        
+        Returns:
+            List of all key facts with topic context
+        """
+        return self.context.working_context.get_all_key_facts()
+    
+    def search_key_facts(self, search_term: str) -> List[Dict[str, Any]]:
+        """
+        Search for key facts containing a specific term.
+        
+        Args:
+            search_term: Term to search for in key facts
+            
+        Returns:
+            List of matching facts with topic context
+        """
+        return self.context.working_context.search_key_facts(search_term)
     
     def update_context(self, key: str, value: Any):
         """Update working context."""

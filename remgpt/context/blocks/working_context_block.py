@@ -196,13 +196,64 @@ class WorkingContextBlock(BaseBlock):
         
         return total_tokens
     
+    def get_all_key_facts(self) -> List[Dict[str, Any]]:
+        """
+        Get all key facts from all topics in working context.
+        
+        Returns:
+            List of dictionaries containing topic info and key facts
+        """
+        all_facts = []
+        for topic in self.topics:
+            if topic.key_facts:
+                all_facts.append({
+                    "topic_id": topic.id,
+                    "topic_summary": topic.summary,
+                    "key_facts": topic.key_facts,
+                    "timestamp": topic.timestamp
+                })
+        return all_facts
+    
+    def search_key_facts(self, search_term: str) -> List[Dict[str, Any]]:
+        """
+        Search for key facts containing a specific term.
+        
+        Args:
+            search_term: Term to search for in key facts
+            
+        Returns:
+            List of matching facts with topic context
+        """
+        matches = []
+        search_lower = search_term.lower()
+        
+        for topic in self.topics:
+            matching_facts = []
+            for fact in topic.key_facts:
+                if search_lower in fact.lower():
+                    matching_facts.append(fact)
+            
+            if matching_facts:
+                matches.append({
+                    "topic_id": topic.id,
+                    "topic_summary": topic.summary,
+                    "matching_facts": matching_facts,
+                    "timestamp": topic.timestamp
+                })
+        
+        return matches
+    
     def get_statistics(self) -> Dict[str, Any]:
-        """Get working context statistics."""
+        """Get working context statistics including key facts information."""
+        # Count total key facts across all topics
+        total_key_facts = sum(len(topic.key_facts) for topic in self.topics)
+        
         return {
             "current_topics": len(self.topics),
             "max_topics": self.max_topics,
             "total_topics_processed": self.total_topics_processed,
             "total_topics_evicted": self.total_topics_evicted,
+            "total_key_facts": total_key_facts,
             "legacy_context_keys": len(self.context_data),
             "token_count": self.get_token_count(),
             "token_eviction_threshold": self.token_eviction_threshold,
@@ -210,6 +261,8 @@ class WorkingContextBlock(BaseBlock):
                 {
                     "id": topic.id,
                     "summary": topic.summary[:100] + "..." if len(topic.summary) > 100 else topic.summary,
+                    "key_facts_count": len(topic.key_facts),
+                    "key_facts_preview": topic.get_key_facts_summary(),
                     "message_count": topic.message_count,
                     "token_count": topic.token_count,
                     "timestamp": topic.timestamp
