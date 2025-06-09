@@ -447,10 +447,16 @@ async def demonstrate_real_openai():
         print(f"  • Response 1 length: {len(response1)} chars")
         print(f"  • Response 2 length: {len(response2)} chars")
         
-        print("\n🎉 Real OpenAI demo completed successfully!")
+        print("\n🎉 Enhanced Topic Management Demo completed successfully!")
+        print("\n✅ Features Demonstrated:")
+        print("   • Intelligent topic similarity detection")
+        print("   • Automatic topic updating vs. creation")
+        print("   • Topic drift detection and recall")
+        print("   • Enhanced key facts integration")
+        print("   • Real OpenAI gpt-4o-mini streaming")
         
     except Exception as e:
-        print(f"\n❌ Real OpenAI demo failed: {e}")
+        print(f"\n❌ Enhanced Topic Management demo failed: {e}")
         import traceback
         traceback.print_exc()
 

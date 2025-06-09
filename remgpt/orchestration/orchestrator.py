@@ -198,20 +198,32 @@ class ConversationOrchestrator:
             self.context_manager.add_message_to_queue(message)
             self.logger.info(f"Added {message.role.value} message to FIFO queue")
             
-            # Step 2: Check for topic drift
+            # Step 2: Check for topic drift and handle topic recall
             drift_detected = False
+            topic_recalled = False
             if message.role.value == "user":
                 drift_detected = await self._detect_topic_drift(message)
                 
                 if drift_detected:
-                    # Instead of adding an assistant message, we'll modify the user message to include drift instruction
-                    # This ensures the conversation ends with a user message, which is required for tool calling
+                    # First, try to recall a similar topic for the new message
+                    try:
+                        recalled_topic_id = await self.context_manager.recall_similar_topic(message.content)
+                        if recalled_topic_id:
+                            topic_recalled = True
+                            self.logger.info(f"Automatically recalled similar topic: {recalled_topic_id}")
+                    except Exception as e:
+                        self.logger.error(f"Error during automatic topic recall: {e}")
+                    
+                    # Enhance user message with appropriate instructions
                     original_content = message.content
-                    enhanced_content = f"{original_content}\n\n[SYSTEM INSTRUCTION: Topic drift detected. Before responding to this new topic, you must call the save_current_topic function to save the previous conversation topic.]"
+                    if topic_recalled:
+                        enhanced_content = f"{original_content}\n\n[SYSTEM INSTRUCTION: Topic drift detected and similar topic recalled. Before responding, you must call save_current_topic to save the previous conversation, then continue with the recalled topic context.]"
+                    else:
+                        enhanced_content = f"{original_content}\n\n[SYSTEM INSTRUCTION: Topic drift detected. Before responding to this new topic, you must call save_current_topic to save the previous conversation topic. You may also call recall_similar_topic to check if this topic has been discussed before.]"
                     
                     # Update the message content
                     message.content = enhanced_content
-                    self.logger.info("Enhanced user message with topic drift instruction")
+                    self.logger.info("Enhanced user message with topic drift and recall instructions")
             
             # Step 3: Check token usage
             token_warning_added = False
@@ -585,6 +597,59 @@ class ConversationOrchestrator:
                     }
                 }
         
+        class UpdateTopicTool(BaseTool):
+            def __init__(self, context_manager):
+                super().__init__("update_topic", "Update an existing topic with additional information")
+                self.context_manager = context_manager
+            
+            async def execute(self, topic_id: str, additional_summary: str, additional_key_facts: list = None) -> dict:
+                updated_id = self.context_manager.update_topic(topic_id, additional_summary, additional_key_facts)
+                return {"topic_id": updated_id, "status": "updated"}
+            
+            def get_schema(self) -> dict:
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": "update_topic",
+                        "description": "Update an existing topic with additional information instead of creating a new topic",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "topic_id": {"type": "string", "description": "ID of the existing topic to update"},
+                                "additional_summary": {"type": "string", "description": "Additional summary to merge"},
+                                "additional_key_facts": {"type": "array", "items": {"type": "string"}, "description": "Additional key facts"}
+                            },
+                            "required": ["topic_id", "additional_summary"]
+                        }
+                    }
+                }
+        
+        class RecallTopicTool(BaseTool):
+            def __init__(self, context_manager):
+                super().__init__("recall_similar_topic", "Recall a similar topic from memory")
+                self.context_manager = context_manager
+            
+            async def execute(self, **kwargs) -> dict:
+                user_message = kwargs.get("user_message", "")
+                recalled_id = await self.context_manager.recall_similar_topic(user_message)
+                return {"topic_id": recalled_id, "status": "recalled" if recalled_id else "none_found"}
+            
+            def get_schema(self) -> dict:
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": "recall_similar_topic",
+                        "description": "Search for and recall a similar topic from long-term memory based on user message content",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "user_message": {"type": "string", "description": "The user message to find similar topics for"}
+                            },
+                            "required": ["user_message"]
+                        }
+                    }
+                }
+        
         class EvictTopicTool(BaseTool):
             def __init__(self, context_manager):
                 super().__init__("evict_oldest_topic", "Evict the oldest topic from context")
@@ -610,12 +675,16 @@ class ConversationOrchestrator:
         
         # Register tools with the tool executor
         save_tool = SaveTopicTool(self.context_manager)
+        update_tool = UpdateTopicTool(self.context_manager)
+        recall_tool = RecallTopicTool(self.context_manager)
         evict_tool = EvictTopicTool(self.context_manager)
         
         self.tool_executor.register_tool(save_tool)
+        self.tool_executor.register_tool(update_tool)
+        self.tool_executor.register_tool(recall_tool)
         self.tool_executor.register_tool(evict_tool)
         
-        self.logger.info("Registered context management tools with tool executor")
+        self.logger.info("Registered enhanced context management tools with tool executor")
     
     def _get_drift_statistics(self) -> Dict[str, Any]:
         """Get topic drift detection statistics."""
