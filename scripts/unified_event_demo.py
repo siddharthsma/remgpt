@@ -67,7 +67,7 @@ def test_orchestrator_integration():
     try:
         from remgpt.orchestration import ConversationOrchestrator
         from remgpt.context import create_context_manager
-        from remgpt.types import UserMessage
+        from remgpt.core.types import UserMessage
         
         print("\n✅ Successfully imported orchestrator with unified Event system")
         

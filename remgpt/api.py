@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .orchestration import ConversationOrchestrator, create_orchestrator
 from .llm import Event
 from .context import create_context_manager
-from .types import Message, UserMessage, MessageRole
+from .core.types import Message, UserMessage, MessageRole
 from .config import get_config
 
 

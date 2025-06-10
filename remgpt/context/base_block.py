@@ -5,7 +5,7 @@ Base abstract class for LLM Context blocks.
 from abc import ABC, abstractmethod
 from typing import List, Optional
 import logging
-from ..types import Message
+from ..core.types import Message
 from .token_counter import TokenCounter
 
 

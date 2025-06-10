@@ -25,7 +25,9 @@ class PageHinkleyTest:
         self.min_cumulative_sum = 0.0
         self.n_samples = 0
         self.mean_estimate = 0.0
-        self.baseline_similarity = 0.8  # Expected similarity for same topic
+        # More realistic baseline for conversation similarity
+        # Normal follow-up questions typically have 0.4-0.6 similarity
+        self.baseline_similarity = 0.5  # Reduced from 0.8 to be more realistic
         
     def reset(self):
         """Reset the test statistics."""

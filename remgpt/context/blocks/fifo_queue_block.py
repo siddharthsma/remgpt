@@ -6,7 +6,7 @@ from typing import List, Optional
 from collections import deque
 import logging
 from ..base_block import BaseBlock
-from ...types import Message
+from ...core.types import Message
 
 
 class FIFOQueueBlock(BaseBlock):

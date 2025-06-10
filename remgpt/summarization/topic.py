@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from dataclasses import dataclass, field
 import numpy as np
 
-from ..types import Message, SystemMessage
+from ..core.types import Message, SystemMessage
 
 
 @dataclass

@@ -19,7 +19,7 @@ from fastapi import HTTPException
 # Import the API components
 from remgpt.api import app, get_current_user, format_sse, stream_response_generator
 from remgpt.llm import Event
-from remgpt.types import UserMessage
+from remgpt.core.types import UserMessage
 
 
 # Test Fixtures

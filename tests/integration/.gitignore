@@ -1,0 +1,12 @@
+# Environment files with API keys
+.env
+.env.local
+
+# Test artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage 

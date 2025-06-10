@@ -13,7 +13,7 @@ from .blocks import (
     WorkingContextBlock,
     FIFOQueueBlock
 )
-from ..types import Message
+from ..core.types import Message
 
 
 class LLMContext:
@@ -94,7 +94,7 @@ class LLMContext:
         
         # Create a single comprehensive system message
         if system_content_parts:
-            from ..types import SystemMessage
+            from ..core.types import SystemMessage
             combined_system_content = "\n\n".join(system_content_parts)
             system_message = SystemMessage(content=combined_system_content)
             all_messages.append(system_message)

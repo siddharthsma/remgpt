@@ -8,7 +8,7 @@ from collections import deque
 import logging
 
 from sentence_transformers import SentenceTransformer
-from ..types import Message
+from ..core.types import Message
 from .embedding_result import EmbeddingResult
 from .page_hinkley_test import PageHinkleyTest
 
@@ -119,6 +119,11 @@ class TopicDriftDetector:
         """
         Detect if the new message represents a topic drift.
         
+        Enhanced algorithm:
+        1. First check if similarity is above a minimum threshold (same topic)
+        2. Only use Page-Hinkley for borderline cases
+        3. Require sustained low similarity to detect drift
+        
         Args:
             message: New message to analyze
             
@@ -147,16 +152,64 @@ class TopicDriftDetector:
         mean_similarity = np.mean(similarities)
         self.recent_similarities.append(mean_similarity)
         
-        # Apply Page-Hinkley test - ALWAYS call it for second message onward
-        drift_detected = self.ph_test.add_sample(mean_similarity)
+        # ENHANCED DRIFT DETECTION LOGIC
+        
+        # Stage 1: High similarity = definitely same topic
+        if mean_similarity >= self.similarity_threshold:
+            drift_detected = False
+            self.logger.info(
+                f"High similarity detected ({mean_similarity:.3f} >= {self.similarity_threshold}), "
+                f"no drift - same topic"
+            )
+        
+        # Stage 2: Very low similarity = potential different topic 
+        elif mean_similarity <= 0.25:  # Lowered from 0.3 to be less sensitive
+            # Require more sustained evidence for drift
+            recent_similarities = list(self.recent_similarities)[-4:]  # Look at last 4 messages
+            very_low_count = sum(1 for s in recent_similarities if s <= 0.3)
+            avg_recent_similarity = np.mean(recent_similarities) if recent_similarities else mean_similarity
+            
+            # Require both: multiple low scores AND low average
+            drift_detected = very_low_count >= 3 and avg_recent_similarity < 0.28
+            
+            if drift_detected:
+                self.logger.info(
+                    f"Strong evidence of topic drift: current={mean_similarity:.3f}, "
+                    f"low_count={very_low_count}/4, avg_recent={avg_recent_similarity:.3f}"
+                )
+            else:
+                self.logger.info(
+                    f"Low similarity ({mean_similarity:.3f}) but insufficient evidence: "
+                    f"low_count={very_low_count}/4, avg_recent={avg_recent_similarity:.3f}"
+                )
+        
+        # Stage 3: Medium similarity = use Page-Hinkley for borderline cases
+        else:
+            # Only use Page-Hinkley for ambiguous cases (0.25 - 0.6 range)
+            ph_drift = self.ph_test.add_sample(mean_similarity)
+            
+            # Much stricter constraints for medium similarities
+            very_low_similarities = [s for s in self.recent_similarities if s < 0.35]
+            sustained_drift = (
+                len(very_low_similarities) >= min(4, len(self.recent_similarities) // 2) and
+                np.mean(self.recent_similarities) < 0.4
+            )
+            
+            drift_detected = ph_drift and sustained_drift
+            
+            self.logger.info(
+                f"Borderline similarity ({mean_similarity:.3f}), "
+                f"PH_test={ph_drift}, low_similarities={len(very_low_similarities)}, "
+                f"avg_similarity={np.mean(self.recent_similarities):.3f}, "
+                f"final_drift={drift_detected}"
+            )
         
         # Add current embedding to recent embeddings
         self.recent_embeddings.append(embedding_result.embedding)
         
-        self.logger.info(
-            f"Drift detection: similarity={mean_similarity:.3f}, "
-            f"drift_detected={drift_detected}"
-        )
+        # Update drift counter if detected
+        if drift_detected:
+            self.logger.info(f"TOPIC DRIFT CONFIRMED: similarity={mean_similarity:.3f}")
         
         return drift_detected, embedding_result, mean_similarity
     

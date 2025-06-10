@@ -9,7 +9,7 @@ to stress-test and potentially break the system.
 
 import logging
 from remgpt.detection import TopicDriftDetector
-from remgpt.types import UserMessage
+from remgpt.core.types import UserMessage
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

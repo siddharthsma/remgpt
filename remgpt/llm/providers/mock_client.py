@@ -175,19 +175,31 @@ class MockLLMClient(BaseLLMClient):
         """
         function_calls = []
         
-        # Check for topic drift warning
+        # Only check user and assistant messages, not system messages
+        conversation_messages = [
+            msg for msg in messages 
+            if msg.get("role") in ["user", "assistant"] and msg.get("content")
+        ]
+        
+        # Check for topic drift warning in conversation (not system instructions)
         has_drift_warning = any(
             "TOPIC DRIFT DETECTED" in str(msg.get("content", ""))
-            for msg in messages
+            for msg in conversation_messages
         )
         
-        # Check for token limit warning
+        # Check for token limit warning in conversation
         has_token_warning = any(
             "APPROACHING TOKEN LIMIT" in str(msg.get("content", ""))
-            for msg in messages
+            for msg in conversation_messages
         )
         
-        if has_drift_warning:
+        # Check for explicit system instructions to call tools
+        has_save_instruction = any(
+            "you must call save_current_topic" in str(msg.get("content", "")).lower()
+            for msg in conversation_messages
+        )
+        
+        if has_drift_warning or has_save_instruction:
             function_calls.append({
                 "name": "save_current_topic",
                 "args": {

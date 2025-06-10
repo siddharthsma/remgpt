@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from remgpt.detection import TopicDriftDetector, EmbeddingResult, PageHinkleyTest
-from remgpt.types import UserMessage, AssistantMessage, SystemMessage
+from remgpt.core.types import UserMessage, AssistantMessage, SystemMessage
 
 
 class TestPageHinkleyTest:

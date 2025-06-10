@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from .token_counter import TokenCounter
 from .llm_context import LLMContext
-from ..types import Message
+from ..core.types import Message
 from ..summarization import Topic
 from .topic_similarity_service import TopicSimilarityService
 from ..storage.vector_database import VectorDatabase
@@ -29,25 +29,73 @@ class LLMContextManager:
         logger: Optional[logging.Logger] = None
     ):
         """
-        Initialize context manager.
+        Initialize the LLM Context Manager.
         
         Args:
-            max_tokens: Maximum tokens allowed in context
-            vector_database: Optional vector database for topic storage and retrieval
+            max_tokens: Maximum token limit for the context
+            vector_database: Optional vector database for storing/retrieving topics
             logger: Optional logger instance
         """
         self.max_tokens = max_tokens
         self.vector_database = vector_database
         self.logger = logger or logging.getLogger(__name__)
         
-        # Initialize token counter and context
-        self.token_counter = TokenCounter()
-        self.context = LLMContext(self.token_counter, logger=self.logger)
+        # Initialize token counting service
+        self.token_counter = TokenCounter(logger=self.logger)
         
-        # Initialize topic similarity service
-        self.topic_similarity_service = TopicSimilarityService(logger=self.logger)
+        # Initialize context with token counter
+        self.context = LLMContext(token_counter=self.token_counter, logger=self.logger)
         
-        self.logger.info(f"LLMContextManager initialized with max_tokens={max_tokens}")
+        # Initialize topic similarity service with vector database
+        self.topic_similarity_service = TopicSimilarityService(
+            logger=self.logger
+        )
+        
+        # Initialize working context token limit tracking
+        self.working_context_token_threshold = max_tokens * 0.6  # 60% of max tokens
+        
+        # Callbacks for external components to listen to events
+        self.on_topic_created_callbacks = []
+        self.on_topic_updated_callbacks = []
+        self.on_topic_evicted_callbacks = []
+        
+        self.logger.info(f"LLMContextManager initialized with {max_tokens} max tokens")
+    
+    def register_topic_created_callback(self, callback):
+        """Register a callback to be called when a topic is created."""
+        self.on_topic_created_callbacks.append(callback)
+    
+    def register_topic_updated_callback(self, callback):
+        """Register a callback to be called when a topic is updated."""
+        self.on_topic_updated_callbacks.append(callback)
+    
+    def register_topic_evicted_callback(self, callback):
+        """Register a callback to be called when a topic is evicted."""
+        self.on_topic_evicted_callbacks.append(callback)
+    
+    def _trigger_topic_created_callbacks(self, topic_id: str):
+        """Trigger all topic created callbacks."""
+        for callback in self.on_topic_created_callbacks:
+            try:
+                callback(topic_id)
+            except Exception as e:
+                self.logger.error(f"Error in topic created callback: {e}")
+    
+    def _trigger_topic_updated_callbacks(self, topic_id: str):
+        """Trigger all topic updated callbacks."""
+        for callback in self.on_topic_updated_callbacks:
+            try:
+                callback(topic_id)
+            except Exception as e:
+                self.logger.error(f"Error in topic updated callback: {e}")
+    
+    def _trigger_topic_evicted_callbacks(self, topic_id: str):
+        """Trigger all topic evicted callbacks."""
+        for callback in self.on_topic_evicted_callbacks:
+            try:
+                callback(topic_id)
+            except Exception as e:
+                self.logger.error(f"Error in topic evicted callback: {e}")
     
     def sync_with_llm_client(self, llm_client: "BaseLLMClient"):
         """
@@ -131,9 +179,15 @@ class LLMContextManager:
         # Get messages from FIFO queue
         queue_messages = self.context.fifo_queue.get_messages()
         
+        # If FIFO queue is empty (likely when called as tool), get recent messages from context
         if not queue_messages:
-            self.logger.warning("No messages in FIFO queue to save as topic")
-            return ""
+            all_messages = self.context.to_messages()
+            # Get the last few messages for topic creation (up to 10 messages)
+            queue_messages = all_messages[-10:] if len(all_messages) > 10 else all_messages
+            
+            if not queue_messages:
+                self.logger.warning("No messages found in context or FIFO queue to save as topic")
+                return ""
         
         # Create embedding for current conversation
         conversation_embedding = self.topic_similarity_service.create_embedding_from_messages(queue_messages)
@@ -156,13 +210,15 @@ class LLMContextManager:
                     similar_topic, topic_summary, topic_key_facts or [], queue_messages
                 )
                 
-                # Flush the FIFO queue
-                self.flush_fifo_queue()
+                # Only flush FIFO queue if we used messages from it
+                if self.context.fifo_queue.get_messages():
+                    self.flush_fifo_queue()
                 
                 self.logger.info(
                     f"Updated existing topic '{updated_topic.id}' with new conversation "
                     f"(similarity: {similarity:.3f})"
                 )
+                self._trigger_topic_updated_callbacks(updated_topic.id)
                 return updated_topic.id
         
         # No similar topic found or similarity too low - create new topic
@@ -182,10 +238,12 @@ class LLMContextManager:
         # Add topic to working context
         self.context.working_context.add_topic(topic)
         
-        # Flush the FIFO queue
-        self.flush_fifo_queue()
+        # Only flush FIFO queue if we used messages from it
+        if self.context.fifo_queue.get_messages():
+            self.flush_fifo_queue()
         
-        self.logger.info(f"Saved current conversation as new topic '{topic_id}' and flushed FIFO queue")
+        self.logger.info(f"Saved current conversation as new topic '{topic_id}'")
+        self._trigger_topic_created_callbacks(topic_id)
         return topic_id
     
     def evict_oldest_topic(self) -> Optional[str]:
@@ -201,6 +259,7 @@ class LLMContextManager:
         
         if evicted_topic:
             self.logger.info(f"Evicted oldest topic: {evicted_topic.id}")
+            self._trigger_topic_evicted_callbacks(evicted_topic.id)
             return evicted_topic.id
         else:
             self.logger.info("No topics available to evict")
@@ -317,6 +376,7 @@ class LLMContextManager:
         self.flush_fifo_queue()
         
         self.logger.info(f"Updated topic '{topic_id}' with additional information")
+        self._trigger_topic_updated_callbacks(updated_topic.id)
         return updated_topic.id
     
     async def recall_similar_topic(self, user_message: str) -> Optional[str]:
@@ -367,4 +427,58 @@ class LLMContextManager:
             return similar_topic.id
         
         self.logger.debug("No similar topics found for recall")
-        return None 
+        return None
+    
+    def recall_similar_topics(self, user_message: str) -> List[Dict[str, Any]]:
+        """
+        Recall similar topics from vector database and/or working context.
+        
+        This method is designed to be called synchronously by the tools.
+        It searches both working context and vector database for similar topics.
+        
+        Args:
+            user_message: The user message to find similar topics for
+            
+        Returns:
+            List of similar topics with their details
+        """
+        if not user_message:
+            self.logger.warning("No user message provided for topic recall")
+            return []
+        
+        similar_topics = []
+        
+        try:
+            # Create embedding for user message
+            message_embedding = self.topic_similarity_service.create_embedding_from_text(user_message)
+            
+            # Check working context for similar topics
+            working_topics = self.context.working_context.get_topics()
+            similar_in_working = self.topic_similarity_service.find_similar_topic_in_working_context(
+                message_embedding, working_topics
+            )
+            
+            if similar_in_working:
+                topic, similarity = similar_in_working
+                similar_topics.append({
+                    "id": topic.id,
+                    "summary": topic.summary,
+                    "key_facts": topic.key_facts,
+                    "similarity": similarity,
+                    "source": "working_context",
+                    "message_count": topic.message_count,
+                    "timestamp": topic.timestamp
+                })
+                self.logger.info(f"Found similar topic in working context: {topic.id} (similarity: {similarity:.3f})")
+            
+            # If we have a vector database, search it as well
+            if self.vector_database:
+                # For now, we'll skip the async vector database search in the synchronous method
+                # The async recall_similar_topic method can be used when async calls are needed
+                self.logger.debug("Vector database search skipped in synchronous recall_similar_topics method")
+            
+            return similar_topics
+            
+        except Exception as e:
+            self.logger.error(f"Error in recall_similar_topics: {e}")
+            return [] 

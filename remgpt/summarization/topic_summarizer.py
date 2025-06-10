@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional, Callable
 import numpy as np
 
-from ..types import Message, SystemMessage
+from ..core.types import Message, SystemMessage
 from .topic import Topic
 
 

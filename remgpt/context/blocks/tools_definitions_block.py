@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import json
 from ..base_block import BaseBlock
-from ...types import Message, SystemMessage
+from ...core.types import Message, SystemMessage
 
 
 class ToolsDefinitionsBlock(BaseBlock):

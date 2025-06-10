@@ -5,7 +5,7 @@ System instructions block for context management.
 from typing import List, Optional
 import logging
 from ..base_block import BaseBlock
-from ...types import Message, SystemMessage
+from ...core.types import Message, SystemMessage
 
 
 class SystemInstructionsBlock(BaseBlock):

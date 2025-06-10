@@ -8,7 +8,7 @@ import logging
 from sentence_transformers import SentenceTransformer
 
 from ..summarization.topic import Topic
-from ..types import Message
+from ..core.types import Message
 from ..storage.vector_database import VectorDatabase
 
 

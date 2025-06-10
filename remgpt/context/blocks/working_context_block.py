@@ -5,7 +5,7 @@ Working context block for LLM Context management.
 from typing import List, Dict, Any, Optional
 from collections import deque
 from ..base_block import BaseBlock
-from ...types import Message, SystemMessage
+from ...core.types import Message, SystemMessage
 from ...summarization import Topic
 import logging
 

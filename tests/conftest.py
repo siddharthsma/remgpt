@@ -47,7 +47,7 @@ def disable_background_tasks():
 @pytest.fixture
 def sample_user_message():
     """Create a sample UserMessage for testing."""
-    from remgpt.types import UserMessage
+    from remgpt.core.types import UserMessage
     return UserMessage(
         content="Hello, this is a test message.",
         name="test_user_123"

@@ -122,7 +122,21 @@ class OpenAIClient(BaseLLMClient):
             # Process completed tool calls
             for call_id, call_info in current_tool_calls.items():
                 try:
-                    args = json.loads(call_info["args"]) if call_info["args"] else {}
+                    if not call_info["args"]:
+                        args = {}
+                    else:
+                        # Try to parse JSON, with fallback for malformed JSON
+                        try:
+                            args = json.loads(call_info["args"])
+                        except json.JSONDecodeError:
+                            # Try to fix common malformed JSON patterns
+                            cleaned_args = self._clean_malformed_json(call_info["args"])
+                            try:
+                                args = json.loads(cleaned_args)
+                            except json.JSONDecodeError:
+                                # If still fails, return the raw string as an error indicator
+                                raise json.JSONDecodeError(f"Could not parse JSON even after cleaning", call_info["args"], 0)
+                    
                     yield Event(
                         type=EventType.TOOL_CALL_ARGS,
                         tool_call_id=call_id,
@@ -143,6 +157,55 @@ class OpenAIClient(BaseLLMClient):
         except Exception as e:
             yield Event(type=EventType.RUN_ERROR, error=str(e))
     
+    def _clean_malformed_json(self, malformed_json: str) -> str:
+        """
+        Attempt to clean malformed JSON, particularly concatenated JSON objects.
+        
+        Args:
+            malformed_json: The malformed JSON string
+            
+        Returns:
+            Cleaned JSON string
+        """
+        import re
+        
+        # Common pattern: {"key1": "value1"}{"key2": "value2"}
+        # We want to merge these into a single object
+        
+        # First, try to find all complete JSON objects
+        json_objects = []
+        brace_count = 0
+        current_obj = ""
+        
+        for char in malformed_json:
+            current_obj += char
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and current_obj.strip():
+                    # We have a complete object
+                    try:
+                        obj = json.loads(current_obj.strip())
+                        json_objects.append(obj)
+                        current_obj = ""
+                    except json.JSONDecodeError:
+                        # Not valid JSON, continue accumulating
+                        pass
+        
+        # If we found multiple objects, merge them
+        if len(json_objects) > 1:
+            merged = {}
+            for obj in json_objects:
+                if isinstance(obj, dict):
+                    merged.update(obj)
+            return json.dumps(merged)
+        elif len(json_objects) == 1:
+            return json.dumps(json_objects[0])
+        
+        # If no objects found, return original (will likely fail parsing)
+        return malformed_json
+
     def send_tool_result(self, tool_call_id: str, result: Any) -> None:
         """Send tool result back to OpenAI (stored for next generation)."""
         # Store tool result for next message generation
